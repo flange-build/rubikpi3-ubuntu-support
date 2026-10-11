@@ -38,14 +38,19 @@ modinfo -n lontium_lt9611
 
 ## 准备本机设备树和启动项
 
+UEFI 须提供 `/chosen/flange,display-fixup-version = <1>` 或更新能力，确保 GRUB
+加载的帧缓冲模板会在本次启动正确填充；旧版固件须先升级并重启。
+
 ```sh
 sudo cp /sys/firmware/fdt ./firmware-original.dtb
 sudo python3 prepare-dtb.py firmware-original.dtb /boot/dtb/rubikpi3-native.dtb
 ```
 
 该工具要求本项目固件提供的 RubikPi3 FDT（含符号），保留内存、MAC、ICE/GPI
-启动修复及供电设置，仅启用 HDMI 链路、禁用尚未验证的 USB-C DP、删除旧帧缓冲
-和上次启动的 EFI 地址/熵。生成的 DTB 属于本机，不应复制到其他设备。
+启动修复及供电设置，启用 HDMI 链路、禁用尚未验证的 USB-C DP。旧帧缓冲替换为
+零地址的 disabled 模板，保留显示时钟/电源引用；UEFI DT fixup 按本次 GOP 填充，
+供 simpledrm 持有资源直到原生 MSM 接管。上次启动的 EFI 地址/熵会删除。
+生成的 DTB 属于本机，不应复制到其他设备。
 
 可使用本目录的安装工具自动生成独立 GRUB 启动项，并安排下一次单次测试启动：
 

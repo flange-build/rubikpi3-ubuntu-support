@@ -133,6 +133,44 @@ class Lifecycle(unittest.TestCase):
             self.assertEqual(result.count('console=ttyMSM0'), 1)
             self.assertIn(existing, result)
 
+    def test_graphical_boot_preserves_splash_policy_and_serial(self):
+        config = self.root / 'grub.cfg'
+        config.write_bytes(self.app.default()[0])
+        shell = ('GRUB_CMDLINE_LINUX="$2"; GRUB_CMDLINE_LINUX_DEFAULT="$3"; '
+                 '. "$1"; . "$1"; printf "%s\\n" '
+                 '"$GRUB_CMDLINE_LINUX" "$GRUB_CMDLINE_LINUX_DEFAULT"')
+        for linux, default, count in (
+            ('', 'quiet splash console=tty0', 1),
+            ('splash', 'quiet console=tty0', 1),
+            ('', 'quiet console=tty0', 0),
+            ('nosplash', 'quiet splash console=tty0', 0),
+            ('', 'quiet splash nosplash', 0),
+            ('plymouth.enable=0', 'quiet splash', 0),
+            ('plymouth.ignore-serial-consoles', 'quiet splash', 1),
+            ('', 'quiet splash plymouth.ignore-serial-consoles', 1),
+            ('', 'quiet splash plymouth.ignore-serial-consoles=0', 1),
+        ):
+            with self.subTest(linux=linux, default=default):
+                result = subprocess.check_output(
+                    ['sh', '-c', shell, 'sh', str(config), linux, default], text=True)
+                self.assertEqual(result.count('plymouth.ignore-serial-consoles'), count)
+                self.assertEqual(result.count('console=ttyMSM0'), 1)
+                self.assertIn(default, result)
+                self.assertNotIn('clk_ignore_unused', result)
+                self.assertNotIn('pd_ignore_unused', result)
+
+    def test_display_fixup_capability_required(self):
+        with self.assertRaisesRegex(RuntimeError, 'Update edk2-flange UEFI'):
+            self.app.check_display_fixup()
+        capability = self.app.path('/sys/firmware/devicetree/base/chosen/flange,display-fixup-version')
+        capability.parent.mkdir(parents=True)
+        for data in (b'1', b'\x00\x00\x00\x00'):
+            capability.write_bytes(data)
+            with self.assertRaisesRegex(RuntimeError, 'Update edk2-flange UEFI'):
+                self.app.check_display_fixup()
+        capability.write_bytes(b'\x00\x00\x00\x01')
+        self.app.check_display_fixup()
+
     def test_legacy_migration_and_rollback_preserve_unknown_entries(self):
         name = '/etc/grub.d/42_rubikpi3_native'
         path = self.app.path(name)
@@ -286,16 +324,25 @@ class Lifecycle(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('dtc') and shutil.which('fdtget'), 'device-tree-compiler required')
 class DeviceTree(unittest.TestCase):
-    def test_native_vpu_transform_and_idempotence(self):
-        # Synthetic fixture: no real board addresses, calibration or MACs.
-        source = '''/dts-v1/;
+    # Synthetic addresses and deliberately non-default provider phandles.
+    SOURCE = '''/dts-v1/;
 / { compatible = "thundercomm,rubikpi3";
     chosen { bootargs = "stale"; rng-seed = <1>; linux,uefi-system-table = <1>;
-             framebuffer@0 { status = "okay"; }; };
+             flange,display-fixup-version = <1>;
+             #address-cells = <2>; #size-cells = <2>; ranges;
+             stdout-path = "serial0:115200n8";
+             framebuffer@deadbeef { compatible = "simple-framebuffer";
+                 reg = <0 0xdeadbeef 0 0x1000>; status = "okay";
+                 width = <640>; height = <480>; stride = <2560>;
+                 memory-region = <0x99>; };
+             unrelated { preserve-me = "yes"; }; };
+    gcc: gcc { compatible = "qcom,gcc-sc7280"; phandle = <0x31>;
+               #clock-cells = <1>; #power-domain-cells = <1>; };
     smmu: iommu { #iommu-cells = <2>; };
     venus: video-codec { compatible = "qcom,sc7280-venus";
                         iommus = <&smmu 0x2180 0x20>; };
-    mdss: display { status = "disabled"; };
+    mdss: display { compatible = "qcom,sc7280-mdss";
+                    phandle = <0x72>; status = "disabled"; };
     dispcc: clocks { status = "disabled"; };
     lt9611_codec: bridge { status = "disabled"; };
     mdss_dsi: dsi { status = "disabled"; };
@@ -303,30 +350,110 @@ class DeviceTree(unittest.TestCase):
     mdss_dp: dp { status = "okay"; };
     __symbols__ { apps_smmu = "/iommu"; };
 };'''
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            dts, dtb, result = tmp / 'in.dts', tmp / 'in.dtb', tmp / 'out.dtb'
-            dts.write_text(source)
-            subprocess.run(['dtc', '-q', '-@', '-I', 'dts', '-O', 'dtb', '-o', str(dtb), str(dts)], check=True)
+
+    @classmethod
+    def fixture(cls, directory, text=None):
+        dts, dtb = directory / 'in.dts', directory / 'in.dtb'
+        dts.write_text(cls.SOURCE if text is None else text)
+        subprocess.run(['dtc', '-q', '-@', '-I', 'dts', '-O', 'dtb', '-o', str(dtb), str(dts)], check=True)
+        return dtb
+
+    @staticmethod
+    def get(dtb, *args):
+        return subprocess.check_output(['fdtget', str(dtb), *args], text=True).strip()
+
+    @staticmethod
+    def native(source, output, check=True):
+        return subprocess.run(['python3', str(HERE / 'components/rubikpi3-native-display/prepare-dtb.py'),
+                               str(source), str(output)], check=check, capture_output=True)
+
+    def assert_template(self, dtb):
+        fb = '/chosen/framebuffer@0'
+        children = self.get(dtb, '-l', '/chosen').splitlines()
+        self.assertEqual([x for x in children if x.startswith('framebuffer@')], ['framebuffer@0'])
+        self.assertEqual(self.get(dtb, fb, 'status'), 'disabled')
+        self.assertEqual(self.get(dtb, fb, 'compatible'), 'simple-framebuffer')
+        self.assertEqual(self.get(dtb, fb, 'format'), 'x8r8g8b8')
+        self.assertEqual(self.get(dtb, '-t', 'x', fb, 'reg'), '0 0 0 0')
+        for prop in ('width', 'height', 'stride'):
+            self.assertEqual(self.get(dtb, '-t', 'x', fb, prop), '0')
+        self.assertNotIn('memory-region', self.get(dtb, '-p', fb).splitlines())
+        gcc = self.get(dtb, '-t', 'x', '/gcc', 'phandle')
+        mdss = self.get(dtb, '-t', 'x', '/display', 'phandle')
+        self.assertEqual(self.get(dtb, '-t', 'x', fb, 'clocks').split(),
+                         [x for clock in ('16', '18', '19', '17') for x in (gcc, clock)])
+        self.assertEqual(self.get(dtb, '-t', 'x', fb, 'power-domains').split(), [gcc, '5', gcc, '6'])
+        self.assertEqual(self.get(dtb, '-t', 'x', fb, 'display'), mdss)
+        self.assertEqual(self.get(dtb, '/chosen/unrelated', 'preserve-me'), 'yes')
+        self.assertEqual(self.get(dtb, '/chosen', 'stdout-path'), 'serial0:115200n8')
+        self.assertNotIn('flange,display-fixup-version', self.get(dtb, '-p', '/chosen').splitlines())
+
+    def test_native_vpu_transform_and_idempotence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            dtb, result = self.fixture(tmp), tmp / 'out.dtb'
             for name in ('rubikpi3-native-display', 'rubikpi3-vpu'):
                 args = ['python3', str(HERE / 'components' / name / 'prepare-dtb.py'), str(dtb), str(result)]
                 if name.endswith('vpu'): args.append('--el2')
                 subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
                 shutil.copyfile(result, dtb)
             before = result.read_bytes()
+            self.native(result, result)
             subprocess.run(['python3', str(HERE / 'components/rubikpi3-vpu/prepare-dtb.py'), str(result), str(result), '--el2'], check=True, stdout=subprocess.DEVNULL)
             self.assertEqual(before, result.read_bytes())
-            def get(*args):
-                return subprocess.check_output(['fdtget', str(result), *args], text=True).strip()
-            self.assertEqual(get('/display', 'status'), 'okay')
-            self.assertEqual(get('/dp', 'status'), 'disabled')
-            self.assertNotIn('bootargs', get('-p', '/chosen'))
-            self.assertNotIn('framebuffer', get('-l', '/chosen'))
-            self.assertEqual(get('-t', 'x', '/video-codec/video-firmware', 'iommus').split()[-2:], ['21a2', '0'])
-            self.assertEqual(get('-t', 'x', '/video-codec', 'iommus').split()[1::3], ['2180', '2184'])
+            self.assert_template(result)
+            self.assertEqual(self.get(result, '/display', 'status'), 'okay')
+            self.assertEqual(self.get(result, '/dp', 'status'), 'disabled')
+            for prop in ('bootargs', 'rng-seed', 'linux,uefi-system-table'):
+                self.assertNotIn(prop, self.get(result, '-p', '/chosen').splitlines())
+            self.assertEqual(self.get(result, '-t', 'x', '/video-codec/video-firmware', 'iommus').split()[-2:], ['21a2', '0'])
+            self.assertEqual(self.get(result, '-t', 'x', '/video-codec', 'iommus').split()[1::3], ['2180', '2184'])
             subprocess.run(['fdtput', '-t', 's', str(result), '/', 'compatible', 'wrong,board'], check=True)
             rejected = subprocess.run(['python3', str(HERE / 'components/rubikpi3-vpu/prepare-dtb.py'), str(result), str(result), '--el2'], capture_output=True)
             self.assertNotEqual(rejected.returncode, 0)
+
+    def test_native_without_framebuffer_rebuilds_template_with_current_phandles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            source = self.SOURCE.replace('0x31', '0xa1').replace('0x72', '0xb2')
+            dtb = self.fixture(tmp, source)
+            subprocess.run(['fdtput', '-r', str(dtb), '/chosen/framebuffer@deadbeef'], check=True)
+            self.native(dtb, dtb)
+            self.assert_template(dtb)
+            before = dtb.read_bytes()
+            self.native(dtb, dtb)
+            self.assertEqual(before, dtb.read_bytes())
+
+    def test_native_rejects_incompatible_resources_without_replacing_output(self):
+        invalid = (
+            ('s', '/', 'compatible', 'wrong,board'),
+            ('s', '/gcc', 'compatible', 'qcom,gcc-other'),
+            ('s', '/display', 'compatible', 'qcom,other-mdss'),
+            ('x', '/gcc', '#clock-cells', '2'),
+            ('x', '/gcc', '#power-domain-cells', '0'),
+            ('x', '/gcc', 'phandle', '0'),
+            ('x', '/display', 'phandle', 'ffffffff'),
+            ('x', '/display', 'phandle', '31'),
+            ('x', '/chosen', '#address-cells', '1'),
+            ('x', '/chosen', '#size-cells', '1'),
+            ('x', '/chosen', 'ranges', '1'),
+            ('s', '/chosen/framebuffer@deadbeef', 'compatible', 'unknown,framebuffer'),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            for kind, node, prop, value in invalid:
+                with self.subTest(node=node, prop=prop, value=value):
+                    dtb = self.fixture(tmp)
+                    subprocess.run(['fdtput', '-t', kind, str(dtb), node, prop, value], check=True)
+                    result = tmp / 'existing.dtb'
+                    result.write_bytes(b'keep existing output')
+                    rejected = self.native(dtb, result, check=False)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertEqual(result.read_bytes(), b'keep existing output')
+                    before = dtb.read_bytes()
+                    rejected = self.native(dtb, dtb, check=False)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertEqual(dtb.read_bytes(), before)
 
 
 if __name__ == '__main__':

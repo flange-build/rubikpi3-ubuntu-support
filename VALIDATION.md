@@ -172,3 +172,92 @@ The startup blue screen persists and whole-system suspend/resume is not validate
 After the unchanged 300-second idle interval, PowerSaveMode=3 and HDMI disabled
 were observed. The user then confirmed successful physical keyboard/mouse wake
 from natural display blanking, completing this display-recovery check.
+
+## 0.2.2 启动画面交接 / Boot display handoff
+
+2026-10-11：
+
+- 相同原生显示配置临时加入 `clk_ignore_unused pd_ignore_unused` 后，用户确认
+  蓝屏消失，但只有文字。Plymouth 日志明确记录检测到串口后强制 details 模式。
+- Boot ID `fc975ae7-b0b6-4c5d-8a05-2b56252e1c93`：保留上述诊断参数，加入
+  `plymouth.ignore-serial-consoles`。日志确认 4.61 秒打开 simpledrm、5.52 秒启动
+  spinner 动画、7.47 秒打开 MSM、9.12 秒完成原生 1920×1080 scanout。
+  GDM 正常启动；这轮物理动画尚未得到用户确认。
+- 第一轮取消全局保活的零地址 framebuffer 模板测试未通过：Boot ID
+  `cd4e70a8-9847-4a5a-a7aa-61f132bf677b` 的 live DT 仍有 disabled `framebuffer@0`，
+  没有 early simpledrm，原生 MSM 到 33.25 秒才注册。这份候选包未安装。
+- 定位到 UEFI 的 DT fixup 容量协商错误：Ubuntu GRUB 先以 size=0 查询，再只重试
+  一次；旧固件先返回原树大小，第二次才要求显示修补额外空间，未完成模板更新。
+  新包要求固件报告 `flange,display-fixup-version >= 1`；缓存 DT 会清除此属性，
+  每次启动须由当前固件重新写入，避免固件降级后误用旧能力标记。
+- 设备树测试覆盖有/无旧 framebuffer、动态 provider phandle、重复转换及坏输入
+  不覆盖输出。启动配置测试覆盖串口保留、禁用 splash、重复生成和旧固件拒绝。
+- 新固件、零模板资源交接与最终 deb 的实机结果以之后记录为准；不把源码测试
+  或图形日志等同于无蓝屏的物理验收。
+
+The keep-resources A/B removed the visible blue screen, while Plymouth forced text
+because of the serial console. Ignoring serial consoles enabled the graphical theme
+and successful simpledrm-to-MSM rendering in logs. The first resource-template test
+exposed a firmware buffer-size negotiation bug: GRUB's single retry was insufficient
+for the old two-stage size response. That candidate was not installed. The package
+now requires a fresh firmware capability marker and removes cached copies from its DT.
+Final firmware/package boot and visible-screen acceptance are recorded separately.
+
+### 新固件候选启动 / Fixed-firmware candidate boot
+
+2026-10-12，Boot ID `57d495b1-b88d-403b-a924-c35205728578`：
+
+- UEFI DEBUG 构建成功，ELF SHA256
+  `92ac348c7efb7b4627608c20011d8b500efaac84c64b841ea7b18e93a7668b58`。
+  两个 UEFI 分区先完整备份，仅写新 ELF 前缀，整分区读回确认前缀一致、尾部未变。
+- 串口确认初始树和 GRUB 提供的模板均执行 `DtFixupDisplay`。live DT 有
+  `flange,display-fixup-version=1`，`framebuffer@DD700000` 为 okay，地址/尺寸来自
+  本次 GOP；四个 GCC 时钟和两个 TBU 电源域引用完整。
+- 未使用 `clk_ignore_unused` 或 `pd_ignore_unused`。1.480 秒注册 DT simpledrm，
+  1.485 秒执行 unused cleanup；8.207 秒原生 MSM 注册，8.758 秒 msmdrmfb 接管。
+- Plymouth 日志确认 simpledrm 和 MSM 均创建 1920×1080 像素显示并设置 scanout，
+  动画主题已加载；GDM active。物理动画和无蓝屏仍等待用户确认。
+- 固件侧 14 个含真实 DT 的 libfdt 用例通过 ASan/UBSan；新增可复用仓库测试用
+  合成 DT 覆盖 10 个场景，普通/ASan/UBSan 均通过。包侧 21 项隔离测试通过。
+
+Both initial and GRUB-loaded DTs were fixed on hardware. DT simpledrm registered
+before unused-resource cleanup and then handed off to native MSM without global
+keepalive parameters. Plymouth created graphical scanout on both drivers and GDM
+started. Physical animation/no-blue-screen acceptance remains pending.
+
+### 0.2.2 安装 / Package installation
+
+- 设备从 0.2.1 实际升级到 0.2.2，只升级此包，无新增/移除其他包；两个 DKMS
+  均重建成功，initramfs/GRUB 刷新完成，`dpkg --verify` 无差异。
+- 安装文件 SHA256 为
+  `62f6cde09fde2b68423ae9a016e7ff44bf939fad501ec916a9beb203a7e96d2b`。
+- 普通 Ubuntu 项使用的 DTB SHA256 为
+  `00933cf2fc8d748da03688a1bbb0c7d8bede1ddd17c5d174d96d87c60283e09b`，
+  与候选启动相同。保存文件不含能力标记，帧缓冲地址为零，依赖当次 UEFI 修补。
+- 默认项自动包含一次 `plymouth.ignore-serial-consoles`，保留串口与 `quiet splash`；
+  不含 `clk_ignore_unused`、`pd_ignore_unused` 或 `plymouth.debug`。
+  临时诊断入口、单次选择和候选 DTB 已移除。
+
+The 0.2.1 → 0.2.2 upgrade rebuilt both DKMS modules and refreshed initramfs/GRUB;
+installed-file verification passed. Only the support package changed. The ordinary
+Ubuntu entry uses the tested candidate DT and graphical splash policy. Temporary
+entries, one-shot selection and global keepalive/debug options have been removed.
+
+### 普通 Ubuntu 项重启 / Standard Ubuntu reboot
+
+Boot ID `fdedc69f-4a5e-414f-bc95-f68da8efccf8`：普通默认 Ubuntu 项自动启动，
+无单次选择、全局保活或 debug 参数。live DT 的能力标记为 1，当前 GOP framebuffer
+为 okay。GDM active，HDMI connected/enabled，桌面 framebuffer 为 `msmdrmfb`。
+内核到 graphical.target 用时 24.689 秒。USB 以太网连接正常、SSH 可用，wlan0 已枚举
+（未连接无线网络）。运行中与磁盘 MSM/LT9611 srcversion 一致，包文件校验无差异。
+用户随后确认启动时仍短暂闪蓝，之后画面恢复。全程无蓝屏的目标尚未达成；
+动画是否完整显示仍未得到单独确认。尚未捕获闪蓝与原生驱动接管的准确时间对应，
+不能把这次短暂闪蓝直接归因于某一次时钟切换或桥复位。
+
+The ordinary default entry rebooted successfully without one-shot selection or
+keepalive/debug flags. GDM, native MSM HDMI and USB Ethernet are active; wlan0 is
+present. Loaded/disk module versions and package checksums match. Kernel-to-graphical
+startup took 24.689 seconds. The user subsequently observed a brief blue flash,
+followed by restored output. A completely blue-free boot is not yet achieved;
+the full visible animation has not been separately confirmed. The flash has not
+been timed against native-driver handoff, clock changes or bridge reset.

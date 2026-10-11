@@ -3,12 +3,14 @@
 **简体中文** | [English](README.en.md)
 
 把官方 Ubuntu 上已验证的 RubikPi3 适配集中为一个
-`rubikpi3-ubuntu-support_0.2.1_arm64.deb`。包含内核代码补丁，也包含固件选择、
+`rubikpi3-ubuntu-support_0.2.2_arm64.deb`。包含内核代码补丁，也包含固件选择、
 设备树生成、模块参数、initramfs 和 GRUB 部署逻辑。
 构建不依赖 EDK2 源码或构建产物。
 
 当前范围为 **Ubuntu 26.04 ARM64、7.0.0-38-generic、RubikPi3、EL2/VHE**，
-需要能正确启动官方 Ubuntu 的 edk2-flange UEFI（含带符号的板级 FDT，Secure Boot 关闭）。
+需要能正确启动官方 Ubuntu 的 edk2-flange UEFI（含带符号的板级 FDT，Secure Boot 关闭），
+并提供 `flange,display-fixup-version = <1>` 或更新的显示修补能力。旧固件须先升级并重启；
+安装检查会拒绝无法正确填充启动帧缓冲模板的旧版本。
 不是任意 Ubuntu 版本、任意固件的通用安装包；不会刷写 UEFI、TrustZone 或 UFS 分区。
 完整清单和 UEFI 分工见 [PATCHES.md](PATCHES.md)。
 
@@ -53,7 +55,7 @@ python3 build-package.py /path/to/linux-source-7.0.0_7.0.0-38.38_all.deb \
 先以官方 Ubuntu 的 `7.0.0-38-generic` 内核启动本机，然后：
 
 ```sh
-sudo apt install ./dist/rubikpi3-ubuntu-support_0.2.1_arm64.deb
+sudo apt install ./dist/rubikpi3-ubuntu-support_0.2.2_arm64.deb
 sudo rubikpi3-support status
 sudo reboot
 ```
@@ -69,6 +71,10 @@ APT 安装明确的内核/headers、DKMS、系统 Qualcomm 图形固件和 Mesa 
 重启即可，无需选一个额外的适配项。GRUB 显示菜单，等待 5 秒后自动启动 Ubuntu。
 高级选项与 UEFI 设置入口保留。
 默认启用 115200 波特率的 `ttyMSM0` 串口控制台，保留已有屏幕控制台设置。
+已有 `splash` 时自动配置 `plymouth.ignore-serial-consoles`，保留串口日志并使用
+图形启动动画；尊重 `nosplash` 和 `plymouth.enable=0`。启动阶段由带显示资源引用的
+simpledrm 临时输出，随后由原生 MSM 接管桌面，不使用全局时钟/电源保活参数。
+需要 UEFI 的 DT fixup 按当次 GOP 填充 framebuffer 地址和尺寸。
 脚本不会在线卸载驱动或自动重启。失败会让 dpkg 配置失败，可修复原因后用
 `sudo dpkg --configure -a` 重试；不要忽略安装错误直接重启。
 
@@ -93,7 +99,7 @@ python3 /usr/share/rubikpi3-support/test-codecs.py ./vpu-results --size 1920x108
 
 硬件验证范围和包测试范围分别记录在 [VALIDATION.md](VALIDATION.md)。
 维护者可执行 `python3 -m unittest discover -s tests -v` 和
-`python3 tests/check-deb.py dist/rubikpi3-ubuntu-support_0.2.1_arm64.deb` 复查包逻辑。
+`python3 tests/check-deb.py dist/rubikpi3-ubuntu-support_0.2.2_arm64.deb` 复查包逻辑。
 安装成功不等于完成硬件验收。当前编码使用 GStreamer 并明确指定 Profile/Level，
 FFmpeg 硬件编码存在段错误，详情见 [VPU 文档](components/rubikpi3-vpu/README.md)。
 

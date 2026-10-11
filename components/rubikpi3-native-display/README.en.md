@@ -44,8 +44,13 @@ sudo python3 prepare-dtb.py firmware-original.dtb /boot/dtb/rubikpi3-native.dtb
 
 The generator requires this project's symbol-bearing RubikPi3 firmware FDT. It
 preserves memory, MAC, ICE/GPI workarounds and supplies; enables HDMI; disables
-unverified USB-C DP; and removes the old framebuffer and stale EFI addresses/entropy.
+unverified USB-C DP; and replaces the old framebuffer with a disabled, zero-address
+template carrying display clock/power references. UEFI DT fixup fills the current GOP
+geometry/address so simpledrm can hold resources until native MSM takes over.
+Stale EFI addresses and entropy are removed.
 The resulting DTB is board-local and must not be copied to other boards.
+UEFI must provide `/chosen/flange,display-fixup-version = <1>` or newer so GRUB's
+framebuffer template is filled on each boot. Upgrade older firmware and reboot first.
 
 The boot installer can generate the entry and schedule a one-time test:
 

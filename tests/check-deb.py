@@ -41,6 +41,9 @@ with tempfile.TemporaryDirectory() as tmp:
         for patch in patches.glob('*.patch'):
             assert (module_source / 'applied-patches' / patch.name).read_bytes() == patch.read_bytes()
     assert (root / 'usr/sbin/rubikpi3-support').read_bytes() == (source / 'runtime/support.py').read_bytes()
+    for component in ('rubikpi3-native-display', 'rubikpi3-vpu'):
+        name = f'components/{component}/prepare-dtb.py'
+        assert (root / 'usr/share/rubikpi3-support' / name).read_bytes() == (source / name).read_bytes()
     for installed, original in (
         ('usr/lib/dracut/dracut.conf.d/92-rubikpi3-support.conf', 'packaging/dracut.conf'),
         ('usr/share/initramfs-tools/hooks/rubikpi3-support', 'packaging/initramfs-hook'),

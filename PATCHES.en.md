@@ -13,7 +13,7 @@ Paths below are relative to `components/`. Candidates are not hardware results.
 | DPU color resources | Board-only single mixer for one interface, no DSC/CWB and width within hardware limit; retain CTM/GAMMA | Kernel atomic allocation on each commit; not a one-time UEFI fix |
 | LT9611 blanking I²C failure | Remove sleep-time address/GPIO changes, patch `0002-*` | Kernel sleep/wake behavior; firmware initialization cannot prevent later address changes |
 | DPU/DISPCC/DSI/PHY/bridge | Local DT helper enables native display | Can move to a distinct firmware native-display mode |
-| Framebuffer removal / DP disabled | Native helper removes compatibility framebuffer and disables untested USB-C DP | Can be firmware mode policy; installer still needs compatibility output |
+| Boot display resource handoff / DP disabled | Rebuild a disabled, zero-address framebuffer template with four GCC clocks and two TBU power domains; disable untested USB-C DP | Firmware fills current GOP geometry/address; simpledrm holds the resources until native MSM takes over |
 | Venus firmware/data streams | Upstream stream mappings select stock Venus direct boot | Can move to EL2-specific firmware fixup, never unconditional EL1/Gunyah |
 | AP6256 firmware/CLM/NVRAM | Board files, sample MAC removed, stock brcmfmac | Linux still needs firmware files; MAC/power/SDIO description belongs in DT |
 | Renesas firmware | Validated payload and initramfs inclusion | Firmware can initialize USB, but Linux may request firmware after reset |
@@ -21,6 +21,7 @@ Paths below are relative to `components/`. Candidates are not hardware results.
 | deferred_probe_timeout=120 | Wait for display/GPU dependencies | Linux dependency/loading issue; no proven UEFI-only fix |
 | separate_gpu_kms=1 | Legacy compatibility modprobe default; native entry overrides it | Linux compatibility policy |
 | DKMS/depmod/initramfs hooks | OS package lifecycle | Ubuntu responsibility |
+| Plymouth graphical boot | Automatically add `plymouth.ignore-serial-consoles` when splash is enabled; retain UART logs and respect disabled splash | Ubuntu userspace policy, not firmware-injected command-line policy |
 | GRUB default / pinned ABI / fallback | Standard Ubuntu entry and backed-up configuration | Ubuntu responsibility |
 | Stale EFI/initrd addresses and entropy | Removed from saved DT | Fresh firmware FDT could eliminate static snapshots |
 | Codec cache, encoding level, FFmpeg faults | Test tool and documented limits | Userspace, not UEFI |
@@ -48,8 +49,8 @@ suspend/resume tests. Module enumeration alone is insufficient.
 
 1. Installer compatibility: retain simple-framebuffer and existing clock/power,
    ICE/GPI workarounds. The official installer lacks the bridge patch.
-2. Installed native system: enable real display nodes, omit the compatibility
-   framebuffer, add Venus mapping in actual EL2 mode, and add GPU DT policy only
+2. Installed native system: enable real display nodes, retain the boot framebuffer
+   and resource references until MSM takes over, add Venus mapping in actual EL2 mode, and add GPU DT policy only
    after stock-driver validation.
 3. EL1/Gunyah: keep that mode's own secure/PAS descriptions; do not reuse EL2 DT.
 

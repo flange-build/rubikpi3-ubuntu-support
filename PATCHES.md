@@ -13,7 +13,7 @@
 | DPU 单 mixer 色彩资源 | `rubikpi3-msm-dkms/patches/0003-*`；本板单接口、无 DSC/CWB 且宽度符合硬件上限时不拆分 mixer，保留 CTM/GAMMA | **内核运行时负责**；UEFI 无法代替每次 atomic commit 的资源分配 |
 | LT9611 熄屏后的 I²C 通信 | `rubikpi3-native-display/patches/0002-*`；移除 sleep 路径的地址/GPIO 改写 | **内核负责**；固件初始化不能阻止 Linux 在熄屏时再次改坏地址 |
 | DPU、DISPCC、DSI、PHY、LT9611 节点 | 本机 `prepare-dtb.py` 启用 | **可迁入 UEFI 原生显示模式**，但需与兼容模式分开 |
-| simple-framebuffer 删除、DP 暂停 | 原生配置删除旧 framebuffer；禁用未验证 USB-C DP | **可按显示模式由 UEFI 提供**；不能让安装器默认依赖未安装的桥驱动 |
+| 启动画面资源交接、DP 暂停 | 重建零地址 disabled framebuffer 模板，引用四个 GCC 时钟和两个 TBU 电源域；禁用未验证 USB-C DP | **UEFI 按本次 GOP 填充**地址/尺寸；simpledrm 暂时持有资源，原生 MSM 接管后释放 |
 | Venus 数据流/固件流 | `0x2180/0x2184` 数据流、`0x21a2` 固件子节点，原版驱动 | **可迁入 EL2 DT fixup**；EL1/Gunyah 不可无条件套用 |
 | Wi-Fi firmware/CLM/NVRAM | 板名专用文件；删除样例 MAC | Linux `request_firmware` 文件仍需要 deb；MAC/供电/SDIO 描述适合 UEFI DT |
 | Renesas USB firmware | 校验固件，放标准路径和 initramfs | UEFI 可初始化供启动使用，但 Linux 重置/重载可能再次请求，**包中仍保留** |
@@ -21,6 +21,7 @@
 | `deferred_probe_timeout=120` | 原生入口参数，等待依赖 | Linux 加载时序临时措施；应进一步研究依赖/模块顺序，不能认定仅改 UEFI 可消除 |
 | `separate_gpu_kms=1` | 复用旧 GPU 包的 modprobe 配置，支持旧兼容入口；新入口显式覆盖 | 兼容显示的 Linux 策略，不是硬件属性 |
 | initramfs 与 DKMS hooks | depmod、驱动/固件入镜像、安装/卸载刷新 | **Ubuntu 负责** |
+| Plymouth 图形启动 | 已有 `splash` 时自动添加 `plymouth.ignore-serial-consoles`，保留 UART 日志；尊重禁用配置 | **Ubuntu 用户态策略**，不由 UEFI 强塞 cmdline |
 | GRUB 默认项、固定 ABI、回退配置 | 使用标准 Ubuntu 入口，维护脚本管理配置和备份 | **Ubuntu 负责**，UEFI 不应管理 apt/kernel 生命周期 |
 | stale EFI/initrd 地址和 entropy | 保存 DT 时删除，由本次启动重新产生 | 使用 UEFI 每次生成新 FDT 后可减少静态 DT 快照需求 |
 | GStreamer codec cache、Profile/Level、FFmpeg 崩溃 | 提供显式参数测试工具和记录；不假装修改上游用户态 | **用户态问题**，不适合 UEFI 修复 |
@@ -49,7 +50,7 @@ GPU 渲染读回、窗口拖动、GPU reset 和休眠/恢复验证；之后才�
 
 1. **安装器兼容**：维持现有 simple-framebuffer、必要时钟/电源保持及 ICE/GPI 规避。
    官方安装镜像还没有 LT9611 B 输入补丁，不能默认切换成原生输出。
-2. **已安装系统原生**：启用真实 DPU/DSI/桥描述，停止插入兼容 framebuffer；
+2. **已安装系统原生**：启用真实 DPU/DSI/桥描述，保留启动 framebuffer 及资源引用直到 MSM 接管；
    在实际 EL2 模式下添加 Venus 固件流，并在验证后加入 GPU zap-shader 策略。
 3. **EL1/Gunyah**：保留该模式自己的 PAS/安全固件描述，不复用 EL2 direct 配置。
 

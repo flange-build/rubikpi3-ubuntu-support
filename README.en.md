@@ -2,13 +2,16 @@
 
 [简体中文](README.md) | **English**
 
-One `rubikpi3-ubuntu-support_0.2.1_arm64.deb` integrates the tested kernel patches,
+One `rubikpi3-ubuntu-support_0.2.2_arm64.deb` integrates the tested kernel patches,
 firmware, board-local DT generation, module parameters, initramfs and GRUB logic.
 Building does not need EDK2 sources or binaries.
 See [PATCHES.en.md](PATCHES.en.md) for the firmware/OS split.
 
 Scope: **Ubuntu 26.04 ARM64, 7.0.0-38-generic, RubikPi3, EL2/VHE**, with
 edk2-flange UEFI, symbol-bearing board FDT and Secure Boot disabled.
+The firmware must report `flange,display-fixup-version = <1>` or newer.
+Upgrade older firmware and reboot first; installation rejects firmware that cannot
+fill the boot framebuffer template correctly.
 This is not a generic package for arbitrary Ubuntu/kernel/firmware versions.
 It does not flash firmware, change TrustZone, repartition storage or reboot.
 
@@ -46,7 +49,7 @@ No board-specific DTB, MAC, EFI address, credentials or SSH setup is shipped.
 Boot the target into Ubuntu kernel `7.0.0-38-generic`, then:
 
 ```sh
-sudo apt install ./dist/rubikpi3-ubuntu-support_0.2.1_arm64.deb
+sudo apt install ./dist/rubikpi3-ubuntu-support_0.2.2_arm64.deb
 sudo rubikpi3-support status
 sudo reboot
 ```
@@ -63,6 +66,11 @@ entry defaults to the adapted, tested kernel; reboot after installation without
 selecting a separate adaptation entry. The menu remains visible for five seconds
 before Ubuntu starts automatically. Advanced options and firmware settings remain available.
 The `ttyMSM0` serial console is enabled at 115200 baud, preserving existing screen console settings.
+When `splash` is already enabled, the package automatically adds
+`plymouth.ignore-serial-consoles` to keep graphical boot and UART logging together;
+`nosplash` and `plymouth.enable=0` are respected. Early simpledrm holds the referenced
+display resources until native MSM takes over. No global clock/power keepalive options
+are used. UEFI DT fixup must fill the framebuffer template from the current GOP.
 Only old RubikPi3 one-shot selections are cleared. There is no live driver unloading or automatic reboot. Errors fail
 dpkg configuration; resolve the cause and retry with `sudo dpkg --configure -a`.
 Do not ignore a failed installation and reboot.
@@ -87,7 +95,7 @@ python3 /usr/share/rubikpi3-support/test-codecs.py ./vpu-results --size 1920x108
 
 See [VALIDATION.md](VALIDATION.md) for hardware and packaging test boundaries.
 Maintainers can run `python3 -m unittest discover -s tests -v` and
-`python3 tests/check-deb.py dist/rubikpi3-ubuntu-support_0.2.1_arm64.deb` to repeat the checks.
+`python3 tests/check-deb.py dist/rubikpi3-ubuntu-support_0.2.2_arm64.deb` to repeat the checks.
 GStreamer encoding requires explicit profile/level; FFmpeg hardware encoding
 still segfaults. Details: [VPU guide](components/rubikpi3-vpu/README.en.md).
 

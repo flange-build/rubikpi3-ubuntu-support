@@ -30,6 +30,10 @@ def main():
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error("run with sudo on the RubikPi3")
+    capability = Path("/sys/firmware/devicetree/base/chosen/flange,display-fixup-version")
+    value = capability.read_bytes() if capability.is_file() else b""
+    if len(value) != 4 or int.from_bytes(value, "big") < 1:
+        parser.error("upgrade edk2-flange UEFI and reboot first: display DT fixup version 1 is required")
     vpu_tool = HERE.parent / "rubikpi3-vpu" / "prepare-dtb.py"
     if args.vpu_el2:
         if not vpu_tool.is_file():
@@ -81,7 +85,7 @@ def main():
         shutil.copyfile(candidate, dtb)
         dtb.chmod(0o644)
     dracut.parent.mkdir(parents=True, exist_ok=True)
-    dracut.write_text('add_drivers+=" msm lontium_lt9611 dispcc_sc7280 xhci_pci_renesas "\n'
+    dracut.write_text('add_drivers+=" msm lontium_lt9611 display_connector dispcc_sc7280 xhci_pci_renesas "\n'
                      'install_items+=" /usr/lib/firmware/renesas_usb_fw.mem "\n')
     dracut.chmod(0o644)
     run("update-initramfs", "-u", "-k", kernel)

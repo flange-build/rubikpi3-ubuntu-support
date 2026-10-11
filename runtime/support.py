@@ -92,6 +92,13 @@ class Support:
             if p.exists() and (name not in state or digest(p) != state[name]):
                 raise RuntimeError(f'Preserving untracked/modified file: {name}; back it up and move it aside first')
 
+    def check_display_fixup(self):
+        capability = self.path('/sys/firmware/devicetree/base/chosen/flange,display-fixup-version')
+        value = capability.read_bytes() if capability.is_file() else b''
+        if len(value) != 4 or int.from_bytes(value, 'big') < 1:
+            raise RuntimeError('Update edk2-flange UEFI and reboot before installing this version: '
+                               'the framebuffer template requires display DT fixup version 1')
+
     def preflight(self):
         if os.uname().machine != 'aarch64' or os.uname().release != self.kernel:
             raise RuntimeError(f'Boot aarch64 Ubuntu {self.kernel} before configuring this package')
@@ -102,6 +109,7 @@ class Support:
         board = self.path('/sys/firmware/devicetree/base/compatible').read_bytes().split(b'\0')
         if self.manifest['compatible'].encode() not in board:
             raise RuntimeError('Not a RubikPi3')
+        self.check_display_fixup()
         log = run('journalctl', '-k', '-b', '--no-pager', '-o', 'cat')
         if 'All CPU(s) started at EL2' not in log or 'VHE mode initialized successfully' not in log:
             raise RuntimeError('Current boot must confirm EL2 and VHE for GPU/VPU direct access')
@@ -304,6 +312,18 @@ esac
             for variable in ('GRUB_CMDLINE_LINUX', 'GRUB_CMDLINE_LINUX_DEFAULT'):
                 config += f'{variable}=$(printf "%s" "${{{variable}:-}}" | {clean})\n'
             config += 'GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX} msm.separate_gpu_kms=0 deferred_probe_timeout=120"\n'
+            # Plymouth otherwise forces text mode when our UART console is
+            # present. Use its supported switch for both initramfs generators;
+            # do not enable splash when the administrator has disabled it.
+            config += '''case " ${GRUB_CMDLINE_LINUX:-} ${GRUB_CMDLINE_LINUX_DEFAULT:-} " in
+    *" splash "*)
+        case " ${GRUB_CMDLINE_LINUX:-} ${GRUB_CMDLINE_LINUX_DEFAULT:-} " in
+            *" nosplash "*|*" plymouth.enable=0 "*|*" plymouth.ignore-serial-consoles "*|*" plymouth.ignore-serial-consoles="*) ;;
+            *) GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-} plymouth.ignore-serial-consoles" ;;
+        esac
+        ;;
+esac
+'''
         else:
             # Firmware display fallback uses the ordinary Ubuntu entry too.
             # Preserve unrelated module blacklists from the administrator.
