@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+kernel=$1
+depmod -a "$kernel"
+if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = rubikpi3-ubuntu-support ]; then
+    exit 0
+fi
+if [ -e "/boot/initrd.img-$kernel" ]; then
+    update-initramfs -u -k "$kernel"
+fi

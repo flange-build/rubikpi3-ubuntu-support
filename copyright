@@ -1,0 +1,15 @@
+Packaging and new Python/shell helpers: Copyright 2026 flange-build contributors.
+License: GPL-2.0-only; /usr/share/common-licenses/GPL-2.
+Kernel sources retain their original copyright and SPDX licenses. The MSM source
+tree includes upstream COPYING and LICENSES. SOURCE and applied-patches record
+the pinned Ubuntu 7.0.0-38.38 provenance and local changes.
+
+AP6256 firmware/CLM/NVRAM: vendor mainline firmware download, documented in
+components/rubikpi3-wifi-firmware/packaging/copyright. No explicit redistribution
+license was supplied with that download. Calibration data retains vendor rights.
+Renesas USB firmware: supplied by the board's usb_fw partition. No redistribution
+license has been established for this extracted copy.
+Both are user-supplied, checksum-verified inputs for local package construction.
+Do not publish firmware binaries or the resulting package without establishing
+the applicable redistribution rights. The scripts' GPL does not cover firmware.
+Distribution Qualcomm graphics firmware is a dependency, not bundled here.

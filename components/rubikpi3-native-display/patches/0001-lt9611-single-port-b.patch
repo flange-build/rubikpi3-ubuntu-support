@@ -1,0 +1,49 @@
+--- a/lontium-lt9611.c
++++ b/lontium-lt9611.c
+@@ -47,6 +47,7 @@
+ 	struct mipi_dsi_device *dsi1;
+ 
+ 	bool ac_mode;
++	bool port_b_primary;
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct gpio_desc *enable_gpio;
+@@ -122,6 +123,16 @@
+ 
+ 	if (lt9611->dsi1_node)
+ 		reg_cfg[1].def = 0x03;
++
++	if (lt9611->port_b_primary) {
++		int ret;
++
++		/* Single input on physical port B: select its byte clock and data. */
++		reg_cfg[3].def = 0x14;
++		ret = regmap_update_bits(lt9611->regmap, 0x8303, BIT(6), BIT(6));
++		if (ret)
++			return ret;
++	}
+ 
+ 	return regmap_multi_reg_write(lt9611->regmap, reg_cfg, ARRAY_SIZE(reg_cfg));
+ }
+@@ -1033,12 +1044,19 @@
+ 			   struct lt9611 *lt9611)
+ {
+ 	lt9611->dsi0_node = of_graph_get_remote_node(dev->of_node, 0, -1);
++	lt9611->dsi1_node = of_graph_get_remote_node(dev->of_node, 1, -1);
++	if (!lt9611->dsi0_node) {
++		/* The binding permits a board with only physical port B connected. */
++		lt9611->dsi0_node = lt9611->dsi1_node;
++		lt9611->dsi1_node = NULL;
++		lt9611->port_b_primary = true;
++	}
+ 	if (!lt9611->dsi0_node) {
+ 		dev_err(lt9611->dev, "failed to get remote node for primary dsi\n");
+ 		return -ENODEV;
+ 	}
+-
+-	lt9611->dsi1_node = of_graph_get_remote_node(dev->of_node, 1, -1);
++	if (lt9611->port_b_primary)
++		dev_info(dev, "using single DSI input on port B\n");
+ 
+ 	lt9611->ac_mode = of_property_read_bool(dev->of_node, "lt,ac-mode");
+ 

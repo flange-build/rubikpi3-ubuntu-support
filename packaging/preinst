@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+case "$1" in
+    install|upgrade)
+        # Only essential tools here: package dependencies need not exist yet.
+        if [ "$(uname -m)" != aarch64 ] || [ "$(uname -r)" != 7.0.0-38-generic ]; then
+            echo 'Boot Ubuntu 7.0.0-38-generic on RubikPi3 before installing this version.' >&2
+            exit 1
+        fi
+        if ! tr '\000' '\n' < /sys/firmware/devicetree/base/compatible | grep -qx 'thundercomm,rubikpi3'; then
+            echo 'This package requires a Thundercomm RubikPi3.' >&2
+            exit 1
+        fi
+        # Preserve unmanaged or legacy-package Wi-Fi files before unpacking.
+        umask 077
+        backup=$(mktemp -d /var/lib/rubikpi3-pre-unpack.XXXXXXXX)
+        for suffix in bin clm_blob txt; do
+            file=/usr/lib/firmware/brcm/brcmfmac43456-sdio.thundercomm,rubikpi3.$suffix
+            if [ -e "$file" ]; then cp -a "$file" "$backup/"; fi
+        done
+        ;;
+esac

@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+case "${1:-}" in prereqs) exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+for suffix in bin clm_blob txt; do
+    copy_file firmware "/usr/lib/firmware/brcm/brcmfmac43456-sdio.thundercomm,rubikpi3.$suffix"
+done

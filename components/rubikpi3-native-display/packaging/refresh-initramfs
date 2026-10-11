@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+kernel=$1
+depmod -a "$kernel"
+if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = rubikpi3-lt9611-dkms ]; then
+    exit 0
+fi
+if [ -e "/boot/initrd.img-$kernel" ]; then
+    update-initramfs -u -k "$kernel"
+fi

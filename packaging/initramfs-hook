@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in prereqs) exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+for module in msm lontium_lt9611 dispcc_sc7280 xhci_pci_renesas; do
+    manual_add_modules "$module"
+done
+copy_file firmware /usr/lib/firmware/renesas_usb_fw.mem

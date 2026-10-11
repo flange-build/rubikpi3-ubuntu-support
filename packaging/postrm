@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+case "$1" in
+    remove|purge)
+        # Package hooks/configuration have now been removed. The generated
+        # firmware recovery entry and backups intentionally survive removal.
+        if command -v update-initramfs >/dev/null 2>&1 && [ -e /boot/initrd.img-7.0.0-38-generic ]; then
+            update-initramfs -u -k 7.0.0-38-generic
+        fi
+        ;;
+esac

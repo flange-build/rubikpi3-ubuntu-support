@@ -1,0 +1,11 @@
+Packaging scripts: Copyright 2026 flange-build contributors
+License: GPL-2.0-only; see /usr/share/common-licenses/GPL-2.
+
+Firmware/NVRAM: supplied by the RubikPi vendor's mainline firmware share.
+Source: https://community.rubikpi.ai/t/mainline-linux-running-mainline-linux-on-rubik-pi-3/439
+Download: https://pan.thundersoft.com/web/share.html?hash=KchzIWzgSnU
+The downloaded files contain no explicit redistribution license. They are not
+covered by the packaging scripts' GPL license. This recipe builds a local
+package from user-supplied downloads; obtain vendor permission before publishing
+the firmware binaries or generated package. Calibration values are unchanged;
+only the active sample macaddr entry is removed from the board NVRAM file.
