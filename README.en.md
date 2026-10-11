@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | **English**
 
-One `rubikpi3-ubuntu-support_0.1.0_arm64.deb` integrates the tested kernel patches,
+One `rubikpi3-ubuntu-support_0.2.1_arm64.deb` integrates the tested kernel patches,
 firmware, board-local DT generation, module parameters, initramfs and GRUB logic.
 Building does not need EDK2 sources or binaries.
 See [PATCHES.en.md](PATCHES.en.md) for the firmware/OS split.
@@ -14,9 +14,10 @@ It does not flash firmware, change TrustZone, repartition storage or reboot.
 
 ## Contents and build
 
-The package contains MSM EL2 SECVID and LT9611 port-B DKMS sources; native HDMI
+The package contains MSM EL2 SECVID, board-specific DPU mixer allocation and
+LT9611 port-B/blanking DKMS patches; native HDMI
 and Venus EL2 DT helpers; AP6256 firmware/CLM/NVRAM with the sample MAC removed;
-verified Renesas USB firmware; initramfs hooks and dedicated native/recovery entries.
+verified Renesas USB firmware; initramfs hooks and automatic standard Ubuntu boot configuration.
 Venus and brcmfmac remain distribution drivers; GPU userspace remains Mesa.
 The four components and their records are under `components/`, with individual build tools.
 Only their payloads are merged, not nested debs or their maintainer scripts.
@@ -45,7 +46,7 @@ No board-specific DTB, MAC, EFI address, credentials or SSH setup is shipped.
 Boot the target into Ubuntu kernel `7.0.0-38-generic`, then:
 
 ```sh
-sudo apt install ./dist/rubikpi3-ubuntu-support_0.1.0_arm64.deb
+sudo apt install ./dist/rubikpi3-ubuntu-support_0.2.1_arm64.deb
 sudo rubikpi3-support status
 sudo reboot
 ```
@@ -56,15 +57,21 @@ and `rubikpi3-wifi-firmware` packages, and conflicts with `qcom-adreno1` and
 `kgsl-dkms`. One deb does not bundle all Ubuntu dependencies for offline installs.
 
 Configuration checks the board, OS, kernel, EL2/VHE, firmware, headers and module
-origins. It validates a local DT, establishes a firmware recovery entry, builds
-both DKMS modules, updates initramfs, then selects **native HDMI + GPU + VPU (EL2)**
-as default with a five-second GRUB menu. Only old RubikPi3 one-shot selections
-are cleared. There is no live driver unloading or automatic reboot. Errors fail
+origins. It generates `/boot/dtb-7.0.0-38-generic` for Ubuntu's stock `10_linux`
+generator, builds both DKMS modules and refreshes initramfs. The ordinary **Ubuntu**
+entry defaults to the adapted, tested kernel; reboot after installation without
+selecting a separate adaptation entry. The menu remains visible for five seconds
+before Ubuntu starts automatically. Advanced options and firmware settings remain available.
+The `ttyMSM0` serial console is enabled at 115200 baud, preserving existing screen console settings.
+Only old RubikPi3 one-shot selections are cleared. There is no live driver unloading or automatic reboot. Errors fail
 dpkg configuration; resolve the cause and retry with `sudo dpkg --configure -a`.
 Do not ignore a failed installation and reboot.
 
 State/backups live under `/var/lib/rubikpi3-support/`; pre-unpack Wi-Fi backups use
-`/var/lib/rubikpi3-pre-unpack.*`. Old manual entries are retained. Modified generated
+`/var/lib/rubikpi3-pre-unpack.*`. Recognized old native/VPU/test entries, their
+old default configuration and project DTBs under `/boot/dtb/` are backed up and
+removed. Unknown/customized files stop automatic cleanup. The empty old DTB
+directory is removed so Ubuntu GRUB cannot mistake the directory for a DT file. Modified generated
 files, different USB firmware and hand-installed module overrides are preserved
 and reported for manual handling instead of silently overwritten.
 
@@ -80,7 +87,7 @@ python3 /usr/share/rubikpi3-support/test-codecs.py ./vpu-results --size 1920x108
 
 See [VALIDATION.md](VALIDATION.md) for hardware and packaging test boundaries.
 Maintainers can run `python3 -m unittest discover -s tests -v` and
-`python3 tests/check-deb.py dist/rubikpi3-ubuntu-support_0.1.0_arm64.deb` to repeat the checks.
+`python3 tests/check-deb.py dist/rubikpi3-ubuntu-support_0.2.1_arm64.deb` to repeat the checks.
 GStreamer encoding requires explicit profile/level; FFmpeg hardware encoding
 still segfaults. Details: [VPU guide](components/rubikpi3-vpu/README.en.md).
 
@@ -91,21 +98,15 @@ maintainer scripts and validation. This package does not disable Ubuntu updates.
 
 ## Recovery and removal
 
-Select **Ubuntu - RubikPi3 firmware display recovery** in GRUB. It uses UEFI's
-compatibility FDT, omits the package DTB and blocks GPU/bridge/Venus modules.
-This assumes edk2-flange compatibility firmware; the new integrated recovery
-entry still needs a real boot acceptance test.
-
 ```sh
 sudo apt remove rubikpi3-ubuntu-support
 ```
 
-Removal selects recovery before removing the native entry and both DKMS modules,
-then refreshes initramfs. Wi-Fi payloads are removed, so Wi-Fi may stop working.
-**Recovery entry/default, backups and deployed USB firmware survive remove/purge**
-to avoid falling back to old native entries that need the removed modules. This
-does not reconstruct every historical manual setting. Once another entry works,
-you may remove `/etc/grub.d/41_rubikpi3_firmware_recovery` and
-`/etc/default/grub.d/zz-rubikpi3-support.cfg`, then run `sudo update-grub`.
-Mesa, Ubuntu firmware and kernel packages remain; old experimental drivers are
-not restored.
+Removal deletes the per-kernel DTB and both DKMS modules, refreshing initramfs.
+The ordinary Ubuntu entry reverts to the UEFI DT with GPU/bridge/Venus modules
+blocked for firmware display. No recovery menu entry is created. Wi-Fi payloads
+are removed, so Wi-Fi may stop working. The fallback configuration at
+`/etc/default/grub.d/zz-rubikpi3-support.cfg`, backups and USB firmware survive
+remove/purge. Once no longer needed, remove the fallback configuration and run
+`sudo update-grub`. Mesa, Ubuntu firmware and kernel packages remain; old
+experimental drivers are not restored.

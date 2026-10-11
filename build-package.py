@@ -118,7 +118,7 @@ Provides: {legacy}
 Suggests: ffmpeg, v4l-utils, gstreamer1.0-tools, gstreamer1.0-plugins-good
 Description: RubikPi3 Ubuntu EL2 board support, drivers and boot configuration
  Integrates MSM and LT9611 DKMS, AP6256 and Renesas firmware, local native
- HDMI/Venus DT generation, initramfs hooks and a GRUB recovery entry.
+ HDMI/Venus DT generation, initramfs hooks and automatic standard Ubuntu boot configuration.
  Validated for Ubuntu 26.04, kernel {kernel}, EL2/VHE. No UEFI flashing.
  Vendor firmware is included for local use; redistribution rights are separate.
 ''')

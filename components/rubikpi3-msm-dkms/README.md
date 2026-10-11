@@ -9,7 +9,7 @@ Mesa Freedreno / Turnip 用户态驱动继续使用 Ubuntu 软件包。
 ## 适用范围
 
 - Thundercomm RubikPi3，Ubuntu ARM64，UEFI **EL2 (KVM)**，Linux VHE 主机。
-- 当前设备树使用 `simpledrm` 输出 HDMI；MSM 单独提供 GPU 渲染节点。
+- 兼容模式使用 `simpledrm`；统一支持包启用原生 MSM DPU/DSI/HDMI。
 - DKMS 自动构建范围为 `7.0.0-*-generic`、`aarch64`，实际验证内核见下方。
   其他内核系列自动跳过；即使同系列，新增 ABI 也可能需要适配源码。
 - `qcom-adreno` / KGSL 闭源栈不在此方案内；本包与 `kgsl-dkms` 冲突。
@@ -23,7 +23,7 @@ Mesa Freedreno / Turnip 用户态驱动继续使用 Ubuntu 软件包。
 
 ```sh
 sudo apt install dkms build-essential python3 linux-headers-$(uname -r)
-sudo apt install ./rubikpi3-msm-dkms_0.1.0_arm64.deb
+sudo apt install ./rubikpi3-msm-dkms_0.1.1_arm64.deb
 dkms status
 modinfo -n msm
 sudo reboot
@@ -52,7 +52,8 @@ sudo journalctl -k -b | grep -E 'SECVID|adreno|msm|fault|hangcheck'
 
 预期 OpenGL 渲染器为 `FD643`，Vulkan 为 `Turnip Adreno (TM) 643`。
 还需运行实际 GPU 渲染负载；仅枚举设备成功不能证明 GPU 正常工作。
-`simpledrm` 继续输出 HDMI，此包不提供原生 DPU 模式设置或休眠恢复修复。
+原生模式包含本板单 mixer 资源分配补丁，避免 1080p 恢复 CTM/GAMMA 时申请不存在的第二个 DSPP。
+显示器熄屏恢复还需要 LT9611 补丁；整机 suspend/resume 尚未验证。
 已安装系统可另行配置 [原生 HDMI](../rubikpi3-native-display/README.md)，
 由该启动项设置 `separate_gpu_kms=0`；本包保留默认的独立 GPU 配置用于兼容启动。
 当前 `simpledrm` 输出没有硬件垂直同步，实机移动窗口或鼠标时可见短暂撕裂，
@@ -84,7 +85,7 @@ python3 build-package.py linux-source-7.0.0_7.0.0-38.38_all.deb --output dist
 应用 `patches/`，生成 ARM64 源码包；无需在构建主机上编译 ARM64 模块。
 完整上游源码不纳入固件仓库，生成的 deb 包包含实际 DKMS 构建所需的源码。
 补丁和打包脚本为 GPL-2.0-only，上游文件保留各自的 SPDX 许可；
-包内 `/usr/src/rubikpi3-msm-0.1.0/LICENSES/` 提供对应文本。
+包内 `/usr/src/rubikpi3-msm-0.1.1/LICENSES/` 提供对应文本。
 
 DKMS 配置及自动构建机制参见 [DKMS 3.2.2 文档](https://github.com/dkms-project/dkms/blob/v3.2.2/dkms.8.in)。
 

@@ -38,19 +38,18 @@ class Lifecycle(unittest.TestCase):
         self.tmp.cleanup()
 
     def install_boot(self):
-        self.app.publish({s.NATIVE: (b'native', 0o755), s.RECOVERY: (b'recovery', 0o755),
-                          s.DTB: (b'dtb', 0o644), s.DEFAULT: self.app.default(s.NATIVE_ID)})
+        self.app.publish({s.DTB: (b'dtb', 0o644), s.DEFAULT: self.app.default()})
 
     def test_configure_repeat_upgrade_and_remove(self):
         self.install_boot()
         self.install_boot()
-        self.app.publish({s.NATIVE: (b'new native', 0o755)})
+        self.app.publish({s.DTB: (b'new dtb', 0o644)})
         self.app.remove()
-        self.app.remove()  # retrying prerm is safe
+        self.app.remove()
         self.assertFalse(self.app.path(s.DTB).exists())
         self.assertFalse(self.app.path(s.NATIVE).exists())
-        self.assertEqual(self.app.path(s.RECOVERY).read_bytes(), b'recovery')
-        self.assertIn(s.RECOVERY_ID, self.app.path(s.DEFAULT).read_text())
+        self.assertFalse(self.app.path(s.RECOVERY).exists())
+        self.assertIn('module_blacklist=', self.app.path(s.DEFAULT).read_text())
 
     def test_grub_failure_restores_files_and_state(self):
         self.install_boot()
@@ -64,35 +63,27 @@ class Lifecycle(unittest.TestCase):
             return ''
         with patch.object(s, 'run', side_effect=fail):
             with self.assertRaises(subprocess.CalledProcessError):
-                self.app.publish({s.NATIVE: (b'bad upgrade', 0o755)})
-        self.assertEqual(self.app.path(s.NATIVE).read_bytes(), b'native')
+                self.app.publish({s.DTB: (b'bad upgrade', 0o644)})
+        self.assertEqual(self.app.path(s.DTB).read_bytes(), b'dtb')
         self.assertEqual(self.app.path('/boot/grub/grub.cfg').read_bytes(), old_cfg)
         self.assertEqual(self.app.load_state(), state)
 
-    def test_first_grub_failure_leaves_no_partial_entry(self):
+    def test_first_grub_failure_leaves_no_partial_configuration(self):
         with patch.object(s, 'run', side_effect=RuntimeError('generation failed')):
             with self.assertRaises(RuntimeError):
                 self.install_boot()
         self.assertFalse(self.app.path(s.DEFAULT).exists())
-        self.assertFalse(self.app.path(s.NATIVE).exists())
+        self.assertFalse(self.app.path(s.DTB).exists())
 
     def test_modified_file_preserved(self):
         self.install_boot()
-        self.app.path(s.NATIVE).write_text('admin edit')
+        self.app.path(s.DTB).write_text('admin edit')
         with self.assertRaisesRegex(RuntimeError, 'modified'):
             self.install_boot()
-        self.assertEqual(self.app.path(s.NATIVE).read_text(), 'admin edit')
-
-    def test_missing_recovery_prevents_removing_working_native_profile(self):
-        self.install_boot()
-        self.app.path(s.RECOVERY).unlink()
-        with self.assertRaisesRegex(RuntimeError, 'Recovery entry is missing'):
-            self.app.remove()
-        self.assertTrue(self.app.path(s.NATIVE).is_file())
-        self.assertIn(s.NATIVE_ID, self.app.path(s.DEFAULT).read_text())
+        self.assertEqual(self.app.path(s.DTB).read_text(), 'admin edit')
 
     def test_untracked_file_and_symlink_rejected(self):
-        target = self.app.path(s.NATIVE)
+        target = self.app.path(s.DTB)
         target.parent.mkdir(parents=True)
         target.write_text('not ours')
         with self.assertRaises(RuntimeError):
@@ -109,28 +100,77 @@ class Lifecycle(unittest.TestCase):
         self.app.manifest['usb_firmware_sha256'] = s.digest(source)
         self.app.ensure_usb()
         self.app.ensure_usb()
-        self.assertEqual(self.app.path(s.USB).read_bytes(), source.read_bytes())
         self.app.path(s.USB).write_bytes(b'other firmware')
         with self.assertRaises(RuntimeError):
             self.app.ensure_usb()
         self.assertEqual(self.app.path(s.USB).read_bytes(), b'other firmware')
 
-    def test_boot_entries_for_separate_boot_filesystem(self):
-        def command(*args):
-            if args[0] == 'findmnt': return 'abcd-1234'
-            if args[0] == 'grub-probe': return 'ffff-5555'
-            if args[0] == 'grub-mkrelpath': return args[1].removeprefix('/boot')
-            raise AssertionError(args)
-        with patch.object(s, 'run', side_effect=command):
-            native, recovery = self.app.boot_entries()
-        self.assertIn(b'devicetree /dtb/rubikpi3-ubuntu-support.dtb', native)
-        self.assertIn(b'root=UUID=abcd-1234', native)
-        self.assertIn(b'--set=root ffff-5555', native)
-        self.assertNotIn(b'devicetree ', recovery)
-        self.assertIn(b'module_blacklist=', recovery)
-        self.assertIn(b'linux /vmlinuz-7.0.0-38-generic', recovery)
+    def test_standard_config_preserves_other_parameters_and_pins_kernel(self):
+        config = self.root / 'grub.cfg'
+        config.write_bytes(self.app.default()[0])
+        shell = 'GRUB_CMDLINE_LINUX="rootwait msm.separate_gpu_kms=1"; GRUB_CMDLINE_LINUX_DEFAULT="quiet splash deferred_probe_timeout=30 crashkernel=512M"; . "$1"; printf "%s\\n" "$GRUB_DEFAULT" "$GRUB_TOP_LEVEL" "$GRUB_CMDLINE_LINUX" "$GRUB_CMDLINE_LINUX_DEFAULT"'
+        result = subprocess.check_output(['sh', '-c', shell, 'sh', str(config)], text=True)
+        self.assertIn('/boot/vmlinuz-7.0.0-38-generic', result)
+        self.assertIn('rootwait', result)
+        self.assertIn('quiet splash', result)
+        self.assertIn('crashkernel=512M', result)
+        self.assertIn('console=ttyMSM0,115200n8', result)
+        self.assertNotIn('separate_gpu_kms=1', result)
+        self.assertIn('separate_gpu_kms=0', result)
+        self.assertNotIn('deferred_probe_timeout=30', result)
+        self.assertEqual(result.count('deferred_probe_timeout=120'), 1)
 
-    def test_failure_building_modules_keeps_recovery_default(self):
+    def test_serial_console_preserves_existing_settings(self):
+        config = self.root / 'grub.cfg'
+        config.write_bytes(self.app.default()[0])
+        for existing in ('console=tty0', 'console=ttyMSM0,9600n8 console=tty0'):
+            shell = ('GRUB_CMDLINE_LINUX_DEFAULT="$2"; . "$1"; . "$1"; '
+                     'printf "%s\\n" "$GRUB_TIMEOUT_STYLE" "$GRUB_TIMEOUT" '
+                     '"$GRUB_CMDLINE_LINUX" "$GRUB_CMDLINE_LINUX_DEFAULT"')
+            result = subprocess.check_output(
+                ['sh', '-c', shell, 'sh', str(config), existing], text=True)
+            self.assertTrue(result.startswith('menu\n5\n'))
+            self.assertEqual(result.count('console=ttyMSM0'), 1)
+            self.assertIn(existing, result)
+
+    def test_legacy_migration_and_rollback_preserve_unknown_entries(self):
+        name = '/etc/grub.d/42_rubikpi3_native'
+        path = self.app.path(name)
+        path.parent.mkdir(parents=True)
+        path.write_text("menuentry 'native' --id rubikpi3-native {\n}\n")
+        unrelated = self.app.path('/etc/grub.d/40_custom')
+        unrelated.write_text('unrelated system')
+        directory = self.app.path('/boot/dtb')
+        directory.mkdir(parents=True)
+        old = self.app.path(s.LEGACY_DTBS[0]); old.write_bytes(b'old dtb')
+        with patch.object(s, 'run', return_value='thundercomm,rubikpi3'):
+            changes = self.app.legacy_changes()
+        with patch.object(s, 'run', side_effect=RuntimeError('update failed')):
+            with self.assertRaises(RuntimeError):
+                self.app.publish({**changes, s.DEFAULT: self.app.default()}, legacy=changes)
+        self.assertTrue(path.exists())
+        self.assertEqual(old.read_bytes(), b'old dtb')
+        self.app.publish({**changes, s.DEFAULT: self.app.default()}, legacy=changes)
+        self.assertFalse(path.exists())
+        self.assertFalse(directory.exists())
+        self.assertEqual(unrelated.read_text(), 'unrelated system')
+        self.assertTrue(list(self.app.state.glob('*/etc/grub.d/42_rubikpi3_native')))
+
+    def test_customized_legacy_entry_is_not_deleted(self):
+        path = self.app.path('/etc/grub.d/42_rubikpi3_native')
+        path.parent.mkdir(parents=True)
+        path.write_text("menuentry 'other' --id another-system {}")
+        with self.assertRaisesRegex(RuntimeError, 'Unexpected content'):
+            self.app.legacy_changes()
+        self.assertTrue(path.exists())
+
+    def test_unrecognized_dtb_directory_contents_are_preserved(self):
+        directory = self.app.path('/boot/dtb'); directory.mkdir(parents=True)
+        (directory / 'other.dtb').write_bytes(b'other')
+        with self.assertRaisesRegex(RuntimeError, 'Unrecognized files'):
+            self.app.legacy_changes()
+
+    def test_failure_building_modules_keeps_standard_firmware_boot(self):
         source = self.app.path('/sys/firmware/fdt')
         source.parent.mkdir(parents=True)
         source.write_bytes(b'fake fdt')
@@ -139,13 +179,109 @@ class Lifecycle(unittest.TestCase):
                 Path(args[3]).write_bytes(b'validated native dt')
             return ''
         with patch.object(self.app, 'preflight'), patch.object(self.app, 'ensure_usb'), \
-             patch.object(self.app, 'boot_entries', return_value=(b'native', b'recovery')), \
              patch.object(self.app, 'build_modules', side_effect=RuntimeError('DKMS failed')), \
              patch.object(s, 'run', side_effect=command):
             with self.assertRaisesRegex(RuntimeError, 'DKMS failed'):
                 self.app.configure()
-        self.assertIn(s.RECOVERY_ID, self.app.path(s.DEFAULT).read_text())
-        self.assertFalse(self.app.path(s.NATIVE).exists())
+        self.assertIn('module_blacklist=', self.app.path(s.DEFAULT).read_text())
+        self.assertFalse(self.app.path(s.DTB).exists())
+
+    def dkms_registration(self, module, version, broken=False, active=False):
+        entry = self.app.path(f'/var/lib/dkms/{module}/{version}')
+        entry.mkdir(parents=True)
+        source = self.app.path(f'/usr/src/{module}-{version}')
+        if not broken:
+            source.mkdir(parents=True)
+            (source / 'dkms.conf').write_text(f'PACKAGE_NAME="{module}"\n')
+        (entry / 'source').symlink_to(source)
+        if active:
+            (entry.parent / f'kernel-{self.app.kernel}-aarch64').symlink_to(
+                f'{version}/{self.app.kernel}/aarch64')
+        return entry
+
+    def test_dkms_upgrade_retires_only_managed_old_versions_after_both_installs(self):
+        self.app.manifest['dkms'] = dict.fromkeys(s.MANAGED_DKMS, '0.1.1')
+        for module in s.MANAGED_DKMS:
+            self.dkms_registration(module, '0.1.1', active=True)
+        old = self.dkms_registration('rubikpi3-msm', '0.1.0')
+        dangling = self.dkms_registration('rubikpi3-lt9611', '0.1.0', broken=True)
+        unrelated = self.dkms_registration('other-driver', '0.1.0', broken=True)
+        original = old.parent / 'original_module'
+        original.mkdir()
+        (original / 'stock.ko').write_bytes(b'original')
+        def command(*args):
+            self.calls.append(args)
+            if args[0] == 'modinfo':
+                return f'/lib/modules/{self.app.kernel}/updates/dkms/{args[-1]}.ko'
+            return ''
+        with patch.object(s, 'run', side_effect=command):
+            self.app.build_modules()
+        builds = [i for i, c in enumerate(self.calls) if c[:2] == ('dkms', 'build')]
+        installs = [i for i, c in enumerate(self.calls) if c[:2] == ('dkms', 'install')]
+        removes = [i for i, c in enumerate(self.calls) if c[:2] == ('dkms', 'remove')]
+        self.assertLess(max(builds), min(installs))
+        self.assertLess(max(installs), min(removes))
+        self.assertEqual([self.calls[i] for i in removes], [
+            ('dkms', 'remove', '-m', 'rubikpi3-msm', '-v', '0.1.0', '--all')])
+        self.assertFalse(dangling.exists())
+        self.assertTrue(list(self.app.state.glob('retired-dkms-*/rubikpi3-lt9611/0.1.0')))
+        self.assertTrue(unrelated.exists())
+        self.assertEqual((original / 'stock.ko').read_bytes(), b'original')
+        for module in s.MANAGED_DKMS:
+            self.assertTrue(self.app.path(f'/var/lib/dkms/{module}/0.1.1').exists())
+
+    def test_dkms_failure_never_retires_old_versions(self):
+        self.app.manifest['dkms'] = dict.fromkeys(s.MANAGED_DKMS, '0.1.1')
+        old = self.dkms_registration('rubikpi3-msm', '0.1.0', broken=True)
+        for failure in ('build', 'install', 'modinfo'):
+            with self.subTest(failure=failure):
+                calls = []
+                def command(*args):
+                    calls.append(args)
+                    if (args[:2] == ('dkms', failure) and 'rubikpi3-lt9611' in args) or args[0] == failure:
+                        raise subprocess.CalledProcessError(1, args)
+                    return '/lib/modules/test/updates/dkms/driver.ko' if args[0] == 'modinfo' else ''
+                with patch.object(s, 'run', side_effect=command):
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.app.build_modules()
+                self.assertTrue(old.exists())
+                self.assertFalse(any(c[:2] == ('dkms', 'remove') for c in calls))
+                self.assertFalse(list(self.app.state.glob('retired-dkms-*')))
+                if failure == 'build':
+                    self.assertFalse(any(c[:2] == ('dkms', 'install') for c in calls))
+
+    def test_dkms_upgrade_preserves_old_versions_used_by_other_kernels(self):
+        self.app.manifest['dkms'] = dict.fromkeys(s.MANAGED_DKMS, '0.1.1')
+        other_kernel = '7.0.0-37-generic'
+        for module, broken in zip(s.MANAGED_DKMS, (False, True)):
+            self.dkms_registration(module, '0.1.1', active=True)
+            old = self.dkms_registration(module, '0.1.0', broken=broken)
+            (old.parent / f'kernel-{other_kernel}-aarch64').symlink_to(
+                f'0.1.0/{other_kernel}/aarch64')
+        self.app.cleanup_modules(keep_current=True)
+        self.assertFalse(any(c[:2] == ('dkms', 'remove') for c in self.calls))
+        self.assertFalse(list(self.app.state.glob('retired-dkms-*')))
+        for module in s.MANAGED_DKMS:
+            directory = self.app.path(f'/var/lib/dkms/{module}')
+            self.assertTrue((directory / '0.1.0').is_dir())
+            self.assertTrue((directory / '0.1.1').is_dir())
+            self.assertEqual((directory / f'kernel-{other_kernel}-aarch64').readlink(),
+                             Path(f'0.1.0/{other_kernel}/aarch64'))
+
+    def test_remove_cleans_all_managed_versions_and_preserves_active_broken_registration(self):
+        for module in s.MANAGED_DKMS:
+            for version in ('0.1.0', '0.1.1'):
+                self.dkms_registration(module, version)
+        unrelated = self.dkms_registration('other-driver', '0.1.0')
+        self.app.remove()
+        self.assertEqual({c[3:6:2] for c in self.calls if c[:2] == ('dkms', 'remove')},
+                         {(m, v) for m in s.MANAGED_DKMS for v in ('0.1.0', '0.1.1')})
+        self.assertTrue(unrelated.exists())
+        active = self.dkms_registration('rubikpi3-msm', '0.0.9', broken=True, active=True)
+        with self.assertRaisesRegex(RuntimeError, 'Preserving active DKMS'):
+            self.app.cleanup_modules()
+        self.assertTrue(active.exists())
+        self.assertFalse(list(self.app.state.glob('retired-dkms-*')))
 
 
 @unittest.skipUnless(shutil.which('dtc') and shutil.which('fdtget'), 'device-tree-compiler required')

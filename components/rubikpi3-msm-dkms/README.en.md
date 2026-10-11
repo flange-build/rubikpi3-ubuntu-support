@@ -6,7 +6,7 @@
 It includes MSM sources from Ubuntu `7.0.0-38.38` and builds a replacement
 `msm.ko` on the device. Keep Ubuntu's Mesa Freedreno / Turnip userspace drivers.
 
-The current HDMI output still uses `simpledrm` without hardware vertical
+Compatibility HDMI output uses `simpledrm` without hardware vertical
 synchronization. Window/pointer motion can tear temporarily despite working GPU
 rendering. Native DPU/DSI/LT9611 display support is needed for synchronized scanout;
 see the bilingual [display investigation](DISPLAY-TEARING.md).
@@ -18,7 +18,7 @@ which sets separate_gpu_kms=0 for that boot entry. This package retains the
 standalone GPU default for compatibility boots.
 
 - Thundercomm RubikPi3, Ubuntu ARM64, UEFI **EL2 (KVM)**, Linux VHE host.
-- UEFI `simpledrm` provides HDMI scanout; MSM exposes a separate GPU render node.
+- Compatibility mode uses UEFI `simpledrm`; the unified support package enables native MSM DPU/DSI/HDMI.
 - Automatic builds are limited to `7.0.0-*-generic` on `aarch64`. Other kernel
   series are skipped. New ABIs within this series may still need source changes.
 - This package conflicts with `kgsl-dkms`; proprietary qcom-adreno / KGSL is not
@@ -35,7 +35,7 @@ uninstallation cannot leave an unknown custom parameter behind.
 
 ```sh
 sudo apt install dkms build-essential python3 linux-headers-$(uname -r)
-sudo apt install ./rubikpi3-msm-dkms_0.1.0_arm64.deb
+sudo apt install ./rubikpi3-msm-dkms_0.1.1_arm64.deb
 dkms status
 modinfo -n msm
 sudo reboot
@@ -67,8 +67,9 @@ sudo journalctl -k -b | grep -E 'SECVID|adreno|msm|fault|hangcheck'
 
 Expected renderers: `FD643` for OpenGL and `Turnip Adreno (TM) 643` for Vulkan.
 Also test actual rendering: successful device enumeration alone is insufficient.
-HDMI scanout remains on `simpledrm`; this package does not fix native DPU mode
-setting or suspend/resume.
+Native mode includes a board-specific single-mixer fix so 1080p CTM/GAMMA does
+not request a nonexistent second DSPP. Display blanking also needs the LT9611
+fix; whole-system suspend/resume remains unvalidated.
 
 ## Removal
 
@@ -98,7 +99,7 @@ cross compiler is needed on the packaging host. The firmware repository does
 not vendor the complete kernel source; the resulting deb contains the sources
 needed for DKMS. Patches and packaging scripts use GPL-2.0-only. Upstream files
 retain their SPDX licenses, with texts in the packaged
-`/usr/src/rubikpi3-msm-0.1.0/LICENSES/` directory.
+`/usr/src/rubikpi3-msm-0.1.1/LICENSES/` directory.
 
 See the [DKMS 3.2.2 documentation](https://github.com/dkms-project/dkms/blob/v3.2.2/dkms.8.in)
 for configuration and automatic build semantics.

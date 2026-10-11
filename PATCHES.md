@@ -10,6 +10,8 @@
 | MSM 的 EL2 SECVID 路径 | `rubikpi3-msm-dkms/patches/0001-*`，限板型和 VHE | **有 DT 替代候选**，见下文；尚未完成原版 MSM 实机验证 |
 | MSM 外部构建 trace include | `0002-out-of-tree-trace-includes.patch` | 仅 DKMS 构建适配；去掉 MSM DKMS 后一起消失 |
 | LT9611 单 DSI B 输入 | `rubikpi3-native-display/patches/0001-*` | **仍需内核支持**。解析真实 port@1，并设置 B 数据/字节时钟寄存器；仅把 DT port 改成 0 不等价 |
+| DPU 单 mixer 色彩资源 | `rubikpi3-msm-dkms/patches/0003-*`；本板单接口、无 DSC/CWB 且宽度符合硬件上限时不拆分 mixer，保留 CTM/GAMMA | **内核运行时负责**；UEFI 无法代替每次 atomic commit 的资源分配 |
+| LT9611 熄屏后的 I²C 通信 | `rubikpi3-native-display/patches/0002-*`；移除 sleep 路径的地址/GPIO 改写 | **内核负责**；固件初始化不能阻止 Linux 在熄屏时再次改坏地址 |
 | DPU、DISPCC、DSI、PHY、LT9611 节点 | 本机 `prepare-dtb.py` 启用 | **可迁入 UEFI 原生显示模式**，但需与兼容模式分开 |
 | simple-framebuffer 删除、DP 暂停 | 原生配置删除旧 framebuffer；禁用未验证 USB-C DP | **可按显示模式由 UEFI 提供**；不能让安装器默认依赖未安装的桥驱动 |
 | Venus 数据流/固件流 | `0x2180/0x2184` 数据流、`0x21a2` 固件子节点，原版驱动 | **可迁入 EL2 DT fixup**；EL1/Gunyah 不可无条件套用 |
@@ -19,7 +21,7 @@
 | `deferred_probe_timeout=120` | 原生入口参数，等待依赖 | Linux 加载时序临时措施；应进一步研究依赖/模块顺序，不能认定仅改 UEFI 可消除 |
 | `separate_gpu_kms=1` | 复用旧 GPU 包的 modprobe 配置，支持旧兼容入口；新入口显式覆盖 | 兼容显示的 Linux 策略，不是硬件属性 |
 | initramfs 与 DKMS hooks | depmod、驱动/固件入镜像、安装/卸载刷新 | **Ubuntu 负责** |
-| GRUB 默认项、固定 ABI、恢复项 | 由维护脚本生成，保留状态和备份 | **Ubuntu 负责**，UEFI 不应管理 apt/kernel 生命周期 |
+| GRUB 默认项、固定 ABI、回退配置 | 使用标准 Ubuntu 入口，维护脚本管理配置和备份 | **Ubuntu 负责**，UEFI 不应管理 apt/kernel 生命周期 |
 | stale EFI/initrd 地址和 entropy | 保存 DT 时删除，由本次启动重新产生 | 使用 UEFI 每次生成新 FDT 后可减少静态 DT 快照需求 |
 | GStreamer codec cache、Profile/Level、FFmpeg 崩溃 | 提供显式参数测试工具和记录；不假装修改上游用户态 | **用户态问题**，不适合 UEFI 修复 |
 

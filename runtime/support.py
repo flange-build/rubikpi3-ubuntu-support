@@ -18,10 +18,20 @@ STATE = Path('/var/lib/rubikpi3-support')
 NATIVE = '/etc/grub.d/44_rubikpi3_support'
 RECOVERY = '/etc/grub.d/41_rubikpi3_firmware_recovery'
 DEFAULT = '/etc/default/grub.d/zz-rubikpi3-support.cfg'
-DTB = '/boot/dtb/rubikpi3-ubuntu-support.dtb'
+DTB = '/boot/dtb-7.0.0-38-generic'
 USB = '/usr/lib/firmware/renesas_usb_fw.mem'
-NATIVE_ID = 'rubikpi3-ubuntu-support'
-RECOVERY_ID = 'rubikpi3-ubuntu-firmware'
+MANAGED_DKMS = ('rubikpi3-msm', 'rubikpi3-lt9611')
+LEGACY_ENTRIES = {
+    '/etc/grub.d/42_rubikpi3_native': 'rubikpi3-native',
+    '/etc/grub.d/43_rubikpi3_native_vpu': 'rubikpi3-native-vpu',
+    '/etc/grub.d/43_rubikpi3_vpu_test': 'rubikpi3-vpu-test',
+    NATIVE: 'rubikpi3-ubuntu-support',
+    RECOVERY: 'rubikpi3-ubuntu-firmware',
+}
+LEGACY_DTBS = tuple('/boot/dtb/' + name for name in (
+    'rubikpi3-native-test.dtb', 'rubikpi3-native.dtb', 'rubikpi3-native-vpu.dtb',
+    'rubikpi3-vpu-test.dtb', 'rubikpi3-ubuntu-support.dtb'))
+LEGACY_DEFAULT = '/etc/default/grub.d/99-rubikpi3-native.cfg'
 
 
 def run(*args):
@@ -105,7 +115,11 @@ class Support:
         fw = '/usr/lib/firmware/qcom/vpu-2.0/venus.mbn'
         if not any(self.path(fw + suffix).is_file() for suffix in ('', '.zst', '.xz')):
             raise RuntimeError('Missing Venus firmware (linux-firmware-qualcomm-graphics)')
-        self.check_managed((NATIVE, RECOVERY, DEFAULT, DTB))
+        self.check_managed((DEFAULT, DTB))
+        self.legacy_changes()
+        generator = self.path('/etc/grub.d/10_linux').read_text()
+        if 'GRUB_TOP_LEVEL' not in generator or '"dtb-${version}"' not in generator:
+            raise RuntimeError('Unsupported GRUB Linux generator: missing kernel priority or per-kernel DT support')
         usb = self.path(USB)
         if usb.exists() and digest(usb) != self.manifest['usb_firmware_sha256']:
             raise RuntimeError('Existing Renesas firmware differs; preserving it for manual review')
@@ -136,54 +150,101 @@ class Support:
             if not self.path(f'/var/lib/dkms/{module}/{version}/source').exists():
                 run('dkms', 'add', '-m', module, '-v', version)
             run('dkms', 'build', '--force', '-m', module, '-v', version, '-k', self.kernel)
+        # Finish both builds before replacing either installed driver.
+        for module, version in self.manifest['dkms'].items():
             run('dkms', 'install', '--force', '-m', module, '-v', version, '-k', self.kernel)
         run('depmod', '-a', self.kernel)
         for module in ('msm', 'lontium_lt9611'):
             if '/updates/dkms/' not in run('modinfo', '-k', self.kernel, '-n', module):
                 raise RuntimeError(f'DKMS module did not take precedence: {module}')
+        self.cleanup_modules(keep_current=True)
 
-    def boot_entries(self):
-        root_uuid = run('findmnt', '-n', '-o', 'UUID', '/')
-        boot_uuid = run('grub-probe', '--target=fs_uuid', f'/boot/vmlinuz-{self.kernel}')
-        for uuid in (root_uuid, boot_uuid):
-            if not re.fullmatch('[0-9a-fA-F-]+', uuid):
-                raise RuntimeError('Unsupported root/boot filesystem UUID')
-        image = run('grub-mkrelpath', f'/boot/vmlinuz-{self.kernel}')
-        initrd = run('grub-mkrelpath', f'/boot/initrd.img-{self.kernel}')
-        self.path(DTB).parent.mkdir(parents=True, exist_ok=True)
-        if run('grub-probe', '--target=fs_uuid', str(Path(DTB).parent)) != boot_uuid:
-            raise RuntimeError('DTB and kernel must reside on the same boot filesystem')
-        dtb = run('grub-mkrelpath', str(Path(DTB).parent)).rstrip('/') + '/' + Path(DTB).name
-        for path in (image, initrd, dtb):
-            if not re.fullmatch(r'/[A-Za-z0-9_./-]+', path):
-                raise RuntimeError(f'Unsupported GRUB path: {path}')
+    def cleanup_modules(self, keep_current=False):
+        """Retire only this package's registrations, after replacements succeed."""
+        for module in MANAGED_DKMS:
+            directory = self.path(f'/var/lib/dkms/{module}')
+            if directory.is_symlink():
+                raise RuntimeError(f'Preserving symlinked DKMS directory: {directory}')
+            if not directory.is_dir():
+                continue
+            current = self.manifest['dkms'].get(module)
+            if keep_current and current is None:
+                continue
+            for entry in sorted(directory.iterdir()):
+                # Skip kernel-* activation links, original_module backups and
+                # unrelated metadata, not just the version listed by manifest.
+                if (entry.is_symlink() or not entry.is_dir() or
+                        not re.fullmatch(r'[0-9][A-Za-z0-9.+:~_-]*', entry.name) or
+                        keep_current and entry.name == current):
+                    continue
+                active = any(link.is_symlink() and link.resolve().is_relative_to(entry.resolve())
+                             for link in directory.glob('kernel-*'))
+                # An upgrade replaces only the tested kernel's modules. Keep
+                # registrations still used by another installed kernel, even
+                # if dpkg has already removed their source directory.
+                if keep_current and active:
+                    print(f'Keeping DKMS version used by an installed kernel: {module}/{entry.name}')
+                    continue
+                source = entry / 'source'
+                if source.is_symlink() and (source / 'dkms.conf').is_file():
+                    run('dkms', 'remove', '-m', module, '-v', entry.name, '--all')
+                    continue
+                # dpkg can remove the old /usr/src before our new postinst.
+                # DKMS refuses a broken source link. Only archive an inactive
+                # registration; never discard evidence of an installed driver.
+                if active:
+                    raise RuntimeError(f'Preserving active DKMS version with missing source: {module}/{entry.name}')
+                self.state.mkdir(parents=True, exist_ok=True)
+                backup = Path(tempfile.mkdtemp(prefix='retired-dkms-', dir=self.state))
+                destination = backup / module / entry.name
+                destination.parent.mkdir()
+                shutil.move(str(entry), str(destination))
+                print(f'Inactive DKMS registration backed up: {destination}')
 
-        def entry(native):
-            title = 'native HDMI + GPU + VPU (EL2)' if native else 'firmware display recovery'
-            ident = NATIVE_ID if native else RECOVERY_ID
-            tree = f'    devicetree {dtb}\n' if native else ''
-            params = ('msm.separate_gpu_kms=0 deferred_probe_timeout=120' if native else
-                      'module_blacklist=msm,lontium_lt9611,venus_core,venus_enc,venus_dec')
-            return f'''#!/bin/sh
-exec tail -n +3 $0
-menuentry 'Ubuntu - RubikPi3 {title} ({self.kernel})' --id {ident} {{
-    insmod part_gpt
-    insmod ext2
-    insmod fdt
-    search --no-floppy --fs-uuid --set=root {boot_uuid}
-{tree}    linux {image} root=UUID={root_uuid} ro console=tty0 {params}
-    initrd {initrd}
-}}
-'''.encode()
-        return entry(True), entry(False)
+    def legacy_changes(self):
+        """Recognize only our old entries; never delete arbitrary custom menus."""
+        changes = {}
+        for name, ident in LEGACY_ENTRIES.items():
+            path = self.path(name)
+            if path.is_symlink():
+                raise RuntimeError(f'Preserving legacy symlink: {name}')
+            if not path.exists():
+                continue
+            text = path.read_text()
+            ids = re.findall(r'--id[ =]+([A-Za-z0-9_-]+)', text)
+            if ids != [ident] or len(re.findall(r'^menuentry ', text, re.M)) != 1:
+                raise RuntimeError(f'Unexpected content in legacy entry: {name}')
+            changes[name] = None
+        path = self.path(LEGACY_DEFAULT)
+        if path.exists():
+            lines = [x.strip() for x in path.read_text().splitlines() if x.strip() and not x.lstrip().startswith('#')]
+            if not all(re.fullmatch(r'GRUB_(DEFAULT|TIMEOUT_STYLE|TIMEOUT)=[A-Za-z0-9_"\'-]+', x) for x in lines):
+                raise RuntimeError(f'Preserving customized legacy configuration: {LEGACY_DEFAULT}')
+            if not any(re.fullmatch(r'GRUB_DEFAULT=["\']?rubikpi3-[A-Za-z0-9_-]+["\']?', x) for x in lines):
+                raise RuntimeError('Legacy default no longer points to RubikPi3; preserving it')
+            changes[LEGACY_DEFAULT] = None
+        for name in LEGACY_DTBS:
+            path = self.path(name)
+            if path.is_symlink():
+                raise RuntimeError(f'Preserving legacy symlink: {name}')
+            if path.exists():
+                if 'thundercomm,rubikpi3' not in run('fdtget', str(path), '/', 'compatible').split():
+                    raise RuntimeError(f'Not a RubikPi3 DTB: {name}')
+                changes[name] = None
+        directory = self.path('/boot/dtb')
+        if directory.is_dir() and any('/' + str(p.relative_to(self.root)) not in changes for p in directory.iterdir()):
+            raise RuntimeError('Unrecognized files in /boot/dtb; preserving them. GRUB treats this directory as a DTB')
+        return changes
 
-    def publish(self, changes):
+    def publish(self, changes, legacy=()):
         """Back up generated files and restore them if GRUB generation fails."""
-        self.check_managed(changes)
+        self.check_managed(set(changes) - set(legacy))
         self.state.mkdir(parents=True, exist_ok=True)
         backup = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ-'),
                                       dir=self.state))
         old = {}
+        old_directory = self.path('/boot/dtb')
+        directory_mode = old_directory.stat().st_mode & 0o777 if old_directory.is_dir() else None
         state = self.load_state()
         for name in changes:
             p = self.path(name)
@@ -204,10 +265,15 @@ menuentry 'Ubuntu - RubikPi3 {title} ({self.kernel})' --id {ident} {{
                 else:
                     self.atomic(self.path(name), *content)
                     state[name] = digest(self.path(name))
+            if old_directory.is_dir() and not any(old_directory.iterdir()):
+                old_directory.rmdir()
             run('update-grub')
             run('grub-script-check', '/boot/grub/grub.cfg')
             self.save_state(state)
         except Exception:
+            if directory_mode is not None:
+                old_directory.mkdir(parents=True, exist_ok=True)
+                old_directory.chmod(directory_mode)
             for name, content in old.items():
                 if content is None:
                     self.path(name).unlink(missing_ok=True)
@@ -220,9 +286,37 @@ menuentry 'Ubuntu - RubikPi3 {title} ({self.kernel})' --id {ident} {{
             raise
         print(f'Boot configuration backup: {backup}')
 
-    @staticmethod
-    def default(ident):
-        return (f'GRUB_DEFAULT="{ident}"\nGRUB_TIMEOUT_STYLE=menu\nGRUB_TIMEOUT=5\n'.encode(), 0o644)
+    def default(self, native=True):
+        config = f'''# Managed by rubikpi3-ubuntu-support. Standard Ubuntu entry, tested kernel first.
+GRUB_DEFAULT=0
+GRUB_TOP_LEVEL="/boot/vmlinuz-{self.kernel}"
+GRUB_TIMEOUT_STYLE=menu
+GRUB_TIMEOUT=5
+case " ${{GRUB_CMDLINE_LINUX:-}} ${{GRUB_CMDLINE_LINUX_DEFAULT:-}} " in
+    *" console=ttyMSM0,"*|*" console=ttyMSM0 "*) ;;
+    *) GRUB_CMDLINE_LINUX="console=ttyMSM0,115200n8 ${{GRUB_CMDLINE_LINUX:-}}" ;;
+esac
+'''
+        if native:
+            # Drop only the two parameters we own, leaving other distribution
+            # settings (including quiet/splash and crashkernel) intact.
+            clean = "sed -E 's/(^|[[:space:]])msm[.]separate_gpu_kms=[^[:space:]]*//g; s/(^|[[:space:]])deferred_probe_timeout=[^[:space:]]*//g'"
+            for variable in ('GRUB_CMDLINE_LINUX', 'GRUB_CMDLINE_LINUX_DEFAULT'):
+                config += f'{variable}=$(printf "%s" "${{{variable}:-}}" | {clean})\n'
+            config += 'GRUB_CMDLINE_LINUX="${GRUB_CMDLINE_LINUX} msm.separate_gpu_kms=0 deferred_probe_timeout=120"\n'
+        else:
+            # Firmware display fallback uses the ordinary Ubuntu entry too.
+            # Preserve unrelated module blacklists from the administrator.
+            config += '''_rubikpi3_blacklist=msm,lontium_lt9611,venus_core,venus_enc,venus_dec
+for _rubikpi3_arg in ${GRUB_CMDLINE_LINUX:-} ${GRUB_CMDLINE_LINUX_DEFAULT:-}; do
+    case "$_rubikpi3_arg" in
+        module_blacklist=*) _rubikpi3_blacklist="${_rubikpi3_blacklist},${_rubikpi3_arg#*=}" ;;
+    esac
+done
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-} module_blacklist=${_rubikpi3_blacklist}"
+unset _rubikpi3_blacklist _rubikpi3_arg
+'''
+        return config.encode(), 0o644
 
     def configure(self):
         self.preflight()
@@ -239,40 +333,34 @@ menuentry 'Ubuntu - RubikPi3 {title} ({self.kernel})' --id {ident} {{
             run('python3', str(components / 'rubikpi3-vpu/prepare-dtb.py'), str(candidate), str(candidate), '--el2')
             data = candidate.read_bytes()
         self.ensure_usb()
-        native, recovery = self.boot_entries()
-        # Establish a stock-driver recovery route before DKMS changes. If an
-        # initial build fails, a retry is possible without booting a broken
-        # native profile left by a previous manual/component installation.
-        if NATIVE not in self.load_state():
-            self.publish({RECOVERY: (recovery, 0o755), DEFAULT: self.default(RECOVERY_ID)})
+        cleanup = self.legacy_changes()
+        # Before the initial build, restore the ordinary firmware-backed Ubuntu
+        # route. If DKMS fails, no obsolete custom entry is left as default.
+        if DTB not in self.load_state():
+            self.publish({**cleanup, DEFAULT: self.default(False)}, legacy=cleanup)
         self.build_modules()
         run('update-initramfs', '-u', '-k', self.kernel)
-        self.publish({DTB: (data, 0o644), NATIVE: (native, 0o755),
-                      RECOVERY: (recovery, 0o755), DEFAULT: self.default(NATIVE_ID)})
+        self.publish({**cleanup, DTB: (data, 0o644), DEFAULT: self.default()}, legacy=cleanup)
         env = run('grub-editenv', '/boot/grub/grubenv', 'list')
         for line in env.splitlines():
             if line.startswith('next_entry=rubikpi3'):
                 run('grub-editenv', '/boot/grub/grubenv', 'unset', 'next_entry')
-        print(f'Installed {NATIVE_ID} for {self.kernel}. Reboot when ready; firmware was not flashed.')
+        print(f'Ubuntu now defaults to the adapted {self.kernel} profile. Reboot when ready.')
 
     def remove(self):
-        # Leave a firmware-backed recovery entry/default: old native profiles
-        # can depend on the two DKMS modules that are about to be removed.
+        # Return standard Ubuntu to firmware DT, with unsafe graphics/media
+        # probing disabled until a replacement support package is installed.
         state = self.load_state()
-        if RECOVERY in state:
-            self.check_managed((RECOVERY,))
-            if not self.path(RECOVERY).is_file():
-                raise RuntimeError('Recovery entry is missing; reconfigure the package before removing it')
-            self.publish({NATIVE: None, DTB: None, DEFAULT: self.default(RECOVERY_ID)})
+        if DEFAULT in state or DTB in state:
+            cleanup = self.legacy_changes()
+            self.publish({**cleanup, DTB: None, DEFAULT: self.default(False)}, legacy=cleanup)
             env = run('grub-editenv', '/boot/grub/grubenv', 'list')
             if any(x.startswith('next_entry=rubikpi3') for x in env.splitlines()):
                 run('grub-editenv', '/boot/grub/grubenv', 'unset', 'next_entry')
-        for module, version in self.manifest['dkms'].items():
-            if self.path(f'/var/lib/dkms/{module}/{version}').exists():
-                run('dkms', 'remove', '-m', module, '-v', version, '--all')
+        self.cleanup_modules()
         # Keep validated USB firmware for recovery and SSH. It was either
         # already present or copied by ensure_usb, never owned by dpkg here.
-        print('Firmware recovery entry, USB firmware and backups retained. No live drivers unloaded.')
+        print('Standard Ubuntu restored to firmware display. USB firmware and backups retained.')
 
     def status(self):
         print(json.dumps(self.manifest, indent=2))

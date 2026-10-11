@@ -2,6 +2,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -eu
 if [ "$1" = configure ]; then
-    /usr/lib/dkms/common.postinst rubikpi3-lt9611 0.1.0 '' '' "${2:-}"
+    /usr/lib/dkms/common.postinst rubikpi3-lt9611 0.1.1 '' '' "${2:-}"
     update-initramfs -u -k all
 fi

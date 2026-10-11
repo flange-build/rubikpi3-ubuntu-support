@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SOURCE_SHA256 = "3371c76faaf71804e4da817e5767a7256216f708c4613f1fcc0f40ea117c1461"
 HERE = Path(__file__).resolve().parent
 
@@ -56,7 +56,8 @@ Depends: dkms (>= 3.2), build-essential, kmod, initramfs-tools | dracut
 Recommends: linux-headers-generic
 Description: LT9611 single-port-B support for RubikPi3 native HDMI
  Builds the Ubuntu LT9611 bridge driver with support for a sole DSI input
- on physical port B. Device-tree and boot profile deployment is separate.
+ on physical port B and preserves its I2C address across display blanking.
+ Device-tree and boot profile deployment is separate.
 """)
         sums = []
         for path in sorted(root.rglob("*")):

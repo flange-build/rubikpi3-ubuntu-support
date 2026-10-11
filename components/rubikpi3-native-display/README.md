@@ -6,7 +6,7 @@
 接管显示，Adreno 提供渲染。原生输出应出现 `HDMI-A-1`、`msmdrmfb` 和硬件 vblank。
 UEFI 自带的安装器兼容设备树不变；启动时可能短暂出现 EFI 帧缓冲，原生 MSM 随后移除它。
 
-本目录包含 LT9611 的单 B 输入 DKMS 补丁及板级 DTB 生成工具。
+本目录包含 LT9611 的单 B 输入、熄屏后 I²C 地址保持补丁及板级 DTB 生成工具。
 GPU 仍需 [MSM EL2 DKMS](../rubikpi3-msm-dkms/README.md)。当前仅针对
 Ubuntu `7.0.0-38-generic`；不能把“已编译”当作其他内核、显示模式或热插拔已通过验证。
 
@@ -17,7 +17,7 @@ Ubuntu `7.0.0-38-generic`；不能把“已编译”当作其他内核、显示�
 
 ```sh
 python3 build-package.py /path/to/lontium-lt9611.c --output dist
-sudo apt install ./dist/rubikpi3-lt9611-dkms_0.1.0_arm64.deb
+sudo apt install ./dist/rubikpi3-lt9611-dkms_0.1.1_arm64.deb
 dkms status
 modinfo -n lontium_lt9611
 ```
@@ -30,6 +30,8 @@ modinfo -n lontium_lt9611
 补丁保留设备树真实的 `port@1` 接线，将唯一 B 输入作为主 DSI，并设置
 `0x8250=0x14`、`0x8303[6]=1`；A 输入及 A+B 双输入的原有路径保持不变。
 寄存器设置与本项目已验证的 UEFI LT9611 B 输入配置一致。
+熄屏补丁回移[上游提交的修复](https://lore.kernel.org/all/20260127-rubikpi-next-20260116-bugfix-v1-1-46e3396533ac@thundersoft.com/)，
+保留 MIPI/PHY 省电操作，去掉会导致唤醒后通信失败的 I²C 地址与 GPIO 改写。
 
 若此前手工安装过 `updates/rubikpi3-native/lontium-lt9611.ko`，先移到备份目录，
 再运行 `depmod` 和安装 DKMS 包，避免两个模块竞争。不要在线卸载 MSM 或显示桥驱动。

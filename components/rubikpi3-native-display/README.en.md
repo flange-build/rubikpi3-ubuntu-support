@@ -7,7 +7,7 @@ with Adreno rendering. Native output exposes HDMI-A-1, msmdrmfb and hardware vbl
 The firmware's installer compatibility DT remains unchanged. An EFI framebuffer
 may appear during early boot and is removed when native MSM takes over.
 
-This directory provides an LT9611 single-port-B DKMS patch and a board-local DTB
+This directory provides LT9611 single-port-B and sleep-time I²C address fixes, plus a board-local DTB
 generator. The [MSM EL2 DKMS package](../rubikpi3-msm-dkms/README.en.md) is also needed.
 Target kernel: Ubuntu 7.0.0-38-generic. Compilation alone does not validate other
 kernels, modes, hotplug or suspend/resume.
@@ -19,7 +19,7 @@ Extract `drivers/gpu/drm/bridge/lontium-lt9611.c` from Ubuntu
 
 ```sh
 python3 build-package.py /path/to/lontium-lt9611.c --output dist
-sudo apt install ./dist/rubikpi3-lt9611-dkms_0.1.0_arm64.deb
+sudo apt install ./dist/rubikpi3-lt9611-dkms_0.1.1_arm64.deb
 dkms status
 modinfo -n lontium_lt9611
 ```

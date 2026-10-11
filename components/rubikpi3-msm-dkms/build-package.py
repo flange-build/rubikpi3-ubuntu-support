@@ -9,10 +9,15 @@ import subprocess
 import tarfile
 import tempfile
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SOURCE_VERSION = "7.0.0-38.38"
 SOURCE_SHA256 = "997a13a0c7fd0172a93b0c1ae9a4ffc7d3cbbf91d2fdd91d85334193580687de"
 HERE = Path(__file__).resolve().parent
+PATCH_SERIES = (
+    "0001-rubikpi3-el2-direct-secvid.patch",
+    "0002-out-of-tree-trace-includes.patch",
+    "0003-rubikpi3-single-mixer-color-management.patch",
+)
 
 
 def main():
@@ -56,7 +61,9 @@ def main():
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     with tar.extractfile(member) as incoming, dest.open("wb") as outgoing:
                         shutil.copyfileobj(incoming, outgoing)
-        for patch in sorted((HERE / "patches").glob("*.patch")):
+        # Keep the board's GPU and display fixes in an explicit, required order.
+        for name in PATCH_SERIES:
+            patch = HERE / "patches" / name
             subprocess.run(["patch", "--batch", "--fuzz=0", "-p1", "-i", str(patch)], cwd=src, check=True)
         for name in ("dkms.conf", "refresh-initramfs"):
             shutil.copy2(HERE / "packaging" / name, src / name)
@@ -85,10 +92,11 @@ Maintainer: flange-build <flange-build@users.noreply.github.com>
 Depends: dkms (>= 3.2), build-essential, python3 (>= 3.11), kmod, initramfs-tools | dracut
 Recommends: linux-headers-generic
 Conflicts: kgsl-dkms
-Description: RubikPi3 EL2 Adreno MSM driver for Ubuntu 7.0 generic
- Ubuntu MSM driver with a RubikPi3-only VHE/EL2 direct SECVID workaround.
+Description: RubikPi3 EL2 Adreno and native DPU driver for Ubuntu 7.0 generic
+ Ubuntu MSM driver with RubikPi3-only VHE/EL2 SECVID and DPU mixer fixes.
  Source is based on Ubuntu {SOURCE_VERSION}. Other kernel series are excluded.
- Uses Mesa Freedreno/Turnip and keeps UEFI simpledrm scanout.
+ Uses Mesa Freedreno/Turnip. Native HDMI requires the board's bridge driver
+ and device-tree profile; the standalone default keeps firmware scanout.
 """)
         for name in ("postinst", "prerm", "postrm"):
             shutil.copy2(HERE / "packaging" / name, debian / name)

@@ -1,0 +1,35 @@
+From: Hongyang Zhao <hongyang.zhao@thundersoft.com>
+Date: Tue, 27 Jan 2026 15:20:52 +0800
+Subject: [PATCH] drm/bridge: lt9611: Remove I2C address change in sleep
+
+The sleep sequence changes the chip's I2C address and reconfigures its
+address pin, but the wake-up sequence does not restore either setting.
+Consequently, subsequent I2C accesses fail when HDMI is enabled again.
+Keep the address unchanged while retaining MIPI Rx and TX PHY power-down.
+
+Backport of the proposed upstream fix to the Ubuntu 7.0.0-38.38 driver,
+after the RubikPi3 single-port-B patch. Only the source path and hunk
+position have been adjusted for this standalone DKMS component.
+
+Link: https://lore.kernel.org/all/20260127-rubikpi-next-20260116-bugfix-v1-1-46e3396533ac@thundersoft.com/
+Link: https://lore.kernel.org/all/CAEQ9gEm158YKRPa6V2rOnrgnRxkrXSrbb-WZh5rh7SDGVLM7xA@mail.gmail.com/
+Signed-off-by: Hongyang Zhao <hongyang.zhao@thundersoft.com>
+Tested-by: Roger Shimizu <rosh@debian.org> # Rubik Pi 3 (QCOM QCS6490 platform)
+---
+ lontium-lt9611.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+--- a/lontium-lt9611.c
++++ b/lontium-lt9611.c
+@@ -435,11 +435,6 @@
+ static void lt9611_sleep_setup(struct lt9611 *lt9611)
+ {
+ 	const struct reg_sequence sleep_setup[] = {
+-		{ 0x8024, 0x76 },
+-		{ 0x8023, 0x01 },
+-		{ 0x8157, 0x03 }, /* set addr pin as output */
+-		{ 0x8149, 0x0b },
+-
+ 		{ 0x8102, 0x48 }, /* MIPI Rx power down */
+ 		{ 0x8123, 0x80 },
+ 		{ 0x8130, 0x00 },
